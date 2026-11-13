@@ -1,5 +1,5 @@
 // @vega-provider xvideos
-// @vega-version 1.3
+// @vega-version 1.4
 "use strict";
 
 var URLS_ENDPOINT =
@@ -69,28 +69,45 @@ var getStream = async function (params) {
     ? link
     : baseUrl + (link.startsWith("/") ? "" : "/") + link;
 
-  var defaultHeaders = Object.assign({}, commonHeaders, {
+  var pageHeaders = Object.assign({}, commonHeaders, {
     Referer: baseUrl,
     "User-Agent":
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   });
 
+  var streamHeaders = {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  };
+
   try {
     var res = await axios.get(videoPageUrl, {
-      headers: defaultHeaders,
+      headers: pageHeaders,
       signal: signal,
       maxRedirects: 5,
     });
     var html = res.data;
     var streams = [];
 
-    // 1. Extract HLS and upgrade from hls_low.m3u8 to master hls.m3u8
+    // 1. High Speed Direct MP4 CDN streams (benchmarked up to 60+ Mbps)
+    var highMatch = html.match(
+      /html5player\.setVideoUrlHigh\s*\(\s*['"]([^'"]+)['"]\s*\)/i
+    );
+    var lowMatch = html.match(
+      /html5player\.setVideoUrlLow\s*\(\s*['"]([^'"]+)['"]\s*\)/i
+    );
+
+    // 2. Extract HLS Master & Variant streams
     var hlsMatch = html.match(
       /html5player\.setVideoHLS\s*\(\s*['"]([^'"]+)['"]\s*\)/i
     );
+
+    var masterHlsUrl = "";
+    var hlsVariants = [];
+
     if (hlsMatch && hlsMatch[1]) {
       var rawHlsUrl = hlsMatch[1];
-      var masterHlsUrl = rawHlsUrl.replace(/\/hls_low\.m3u8/i, "/hls.m3u8");
+      masterHlsUrl = rawHlsUrl.replace(/\/hls_low\.m3u8/i, "/hls.m3u8");
       var baseUrlDir = masterHlsUrl.substring(
         0,
         masterHlsUrl.lastIndexOf("/") + 1
@@ -98,7 +115,7 @@ var getStream = async function (params) {
 
       try {
         var hlsRes = await axios.get(masterHlsUrl, {
-          headers: defaultHeaders,
+          headers: pageHeaders,
           timeout: 5000,
           signal: signal,
         });
@@ -139,76 +156,98 @@ var getStream = async function (params) {
             }
           }
 
-          // Sort variants highest bandwidth/resolution first (4K -> 1440p -> 1080p -> 720p -> 480p)
           variants.sort(function (a, b) {
             return b.bandwidth - a.bandwidth;
           });
 
           for (var j = 0; j < variants.length; j++) {
             var v = variants[j];
-            var label = "Direct " + v.name + " (Full Bitrate)";
-            if (v.quality === "2160") label = "Direct 4K Ultra HD (2160p)";
-            else if (v.quality === "1440") label = "Direct 2K QHD (1440p)";
-            else if (v.quality === "1080") label = "Direct 1080p Full HD";
-            else if (v.quality === "720") label = "Direct 720p HD";
+            var label = "Direct " + v.name + " (HLS Full Bitrate)";
+            if (v.quality === "2160") label = "Direct 4K Ultra HD (HLS)";
+            else if (v.quality === "1440") label = "Direct 2K QHD (HLS)";
+            else if (v.quality === "1080") label = "Direct 1080p Full HD (HLS)";
+            else if (v.quality === "720") label = "Direct 720p HD (HLS)";
 
-            streams.push({
+            hlsVariants.push({
               server: label,
               link: v.url,
               type: "m3u8",
               quality: v.quality,
-              headers: defaultHeaders,
+              headers: streamHeaders,
             });
           }
         }
       } catch (hlsErr) {
         console.error("Master HLS fetch error:", hlsErr && hlsErr.message ? hlsErr.message : hlsErr);
       }
-
-      // Add Master Adaptive HLS
-      streams.push({
-        server: "Auto Adaptive (Master HLS)",
-        link: masterHlsUrl,
-        type: "m3u8",
-        quality: "auto",
-        headers: defaultHeaders,
-      });
-    }
-
-    // 2. High Quality MP4
-    var highMatch = html.match(
-      /html5player\.setVideoUrlHigh\s*\(\s*['"]([^'"]+)['"]\s*\)/i
-    );
-    if (highMatch && highMatch[1]) {
-      streams.push({
-        server: "Direct MP4 (High)",
-        link: highMatch[1],
-        type: "mp4",
-        quality: "720",
-        headers: defaultHeaders,
-      });
-    }
-
-    // 3. Low Quality MP4
-    var lowMatch = html.match(
-      /html5player\.setVideoUrlLow\s*\(\s*['"]([^'"]+)['"]\s*\)/i
-    );
-    if (lowMatch && lowMatch[1]) {
-      streams.push({
-        server: "Direct MP4 (Low)",
-        link: lowMatch[1],
-        type: "mp4",
-        quality: "360",
-        headers: defaultHeaders,
-      });
     }
 
     if (isDownload) {
-      streams.sort(function (a, b) {
-        if (a.type === "mp4" && b.type !== "mp4") return -1;
-        if (a.type !== "mp4" && b.type === "mp4") return 1;
-        return 0;
-      });
+      if (highMatch && highMatch[1]) {
+        streams.push({
+          server: "Direct MP4 (High Speed 60Mbps)",
+          link: highMatch[1],
+          type: "mp4",
+          quality: "1080",
+          headers: streamHeaders,
+        });
+      }
+      if (lowMatch && lowMatch[1]) {
+        streams.push({
+          server: "Direct MP4 (Low)",
+          link: lowMatch[1],
+          type: "mp4",
+          quality: "360",
+          headers: streamHeaders,
+        });
+      }
+      if (masterHlsUrl) {
+        streams.push({
+          server: "Auto Adaptive (Master HLS - High Speed)",
+          link: masterHlsUrl,
+          type: "m3u8",
+          quality: "auto",
+          headers: streamHeaders,
+        });
+      }
+      for (var d = 0; d < hlsVariants.length; d++) {
+        streams.push(hlsVariants[d]);
+      }
+    } else {
+      // 1. Auto Adaptive Master HLS FIRST (allows ExoPlayer adaptive bitrate for instant playback)
+      if (masterHlsUrl) {
+        streams.push({
+          server: "Auto Adaptive (Master HLS - High Speed)",
+          link: masterHlsUrl,
+          type: "m3u8",
+          quality: "auto",
+          headers: streamHeaders,
+        });
+      }
+      // 2. Direct MP4 High Speed (60 Mbps CDN)
+      if (highMatch && highMatch[1]) {
+        streams.push({
+          server: "Direct MP4 (High Speed 60Mbps)",
+          link: highMatch[1],
+          type: "mp4",
+          quality: "1080",
+          headers: streamHeaders,
+        });
+      }
+      // 3. Variant HLS streams
+      for (var h = 0; h < hlsVariants.length; h++) {
+        streams.push(hlsVariants[h]);
+      }
+      // 4. Low MP4 fallback
+      if (lowMatch && lowMatch[1]) {
+        streams.push({
+          server: "Direct MP4 (Low)",
+          link: lowMatch[1],
+          type: "mp4",
+          quality: "360",
+          headers: streamHeaders,
+        });
+      }
     }
 
     return streams;

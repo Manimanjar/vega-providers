@@ -1,5 +1,5 @@
 // @vega-provider rule34video
-// @vega-version 1.3
+// @vega-version 1.4
 "use strict";
 
 var URLS_ENDPOINT =
@@ -54,6 +54,56 @@ async function getBase(kvStore, axios) {
   return DEFAULT_BASE_URL;
 }
 
+async function resolveDirectUrl(url, axios, defaultHeaders) {
+  if (typeof fetch === "function") {
+    try {
+      var controller =
+        typeof AbortController === "function" ? new AbortController() : null;
+      var timeoutId = controller
+        ? setTimeout(function () {
+            controller.abort();
+          }, 3500)
+        : null;
+      var res = await fetch(url, {
+        method: "HEAD",
+        redirect: "manual",
+        headers: {
+          "User-Agent": defaultHeaders["User-Agent"] || "Mozilla/5.0",
+          Referer: defaultHeaders["Referer"] || "https://rule34video.com/",
+        },
+        signal: controller ? controller.signal : undefined,
+      });
+      if (timeoutId) clearTimeout(timeoutId);
+      if (res && res.status >= 300 && res.status < 400) {
+        var loc = res.headers.get("location");
+        if (loc && loc.startsWith("http")) return loc;
+      }
+    } catch (e) {}
+  }
+  if (axios && typeof axios.head === "function") {
+    try {
+      var aRes = await axios.head(url, {
+        headers: defaultHeaders,
+        maxRedirects: 0,
+        validateStatus: function (status) {
+          return status >= 200 && status < 400;
+        },
+        timeout: 3500,
+      });
+      if (aRes && aRes.headers && aRes.headers.location) {
+        var aLoc = aRes.headers.location;
+        if (aLoc && aLoc.startsWith("http")) return aLoc;
+      }
+    } catch (e) {
+      if (e.response && e.response.headers && e.response.headers.location) {
+        var eLoc = e.response.headers.location;
+        if (eLoc && eLoc.startsWith("http")) return eLoc;
+      }
+    }
+  }
+  return url;
+}
+
 var getStream = async function (params) {
   var link = params.link;
   var signal = params.signal;
@@ -102,28 +152,28 @@ var getStream = async function (params) {
 
       var qual = "720";
       var rank = 720;
-      var label = "Direct 720p HD";
+      var label = "Direct 720p HD (High Speed CDN)";
 
       if (lbl.includes("4k") || u.includes("2160p") || u.includes("_4k")) {
         qual = "2160";
         rank = 2160;
-        label = "Direct 4K Ultra HD (2160p)";
+        label = "Direct 4K Ultra HD (High Speed CDN)";
       } else if (lbl.includes("1080") || u.includes("1080p")) {
         qual = "1080";
         rank = 1080;
-        label = "Direct 1080p Full HD";
+        label = "Direct 1080p Full HD (High Speed CDN)";
       } else if (lbl.includes("720") || u.includes("720p")) {
         qual = "720";
         rank = 720;
-        label = "Direct 720p HD";
+        label = "Direct 720p HD (High Speed CDN)";
       } else if (lbl.includes("480") || u.includes("480p")) {
         qual = "480";
         rank = 480;
-        label = "Direct 480p SD";
+        label = "Direct 480p SD (High Speed CDN)";
       } else if (lbl.includes("360") || u.includes("360p") || u.includes("_360")) {
         qual = "360";
         rank = 360;
-        label = "Direct 360p";
+        label = "Direct 360p (High Speed CDN)";
       }
 
       if (seenQualities.has(qual)) continue;
@@ -141,28 +191,28 @@ var getStream = async function (params) {
 
       var qual = "720";
       var rank = 720;
-      var label = "Direct 720p HD";
+      var label = "Direct 720p HD (High Speed CDN)";
 
       if (text.includes("2160") || href.includes("2160p") || href.includes("_4k")) {
         qual = "2160";
         rank = 2160;
-        label = "Direct 4K Ultra HD (2160p)";
+        label = "Direct 4K Ultra HD (High Speed CDN)";
       } else if (text.includes("1080") || href.includes("1080p")) {
         qual = "1080";
         rank = 1080;
-        label = "Direct 1080p Full HD";
+        label = "Direct 1080p Full HD (High Speed CDN)";
       } else if (text.includes("720") || href.includes("720p")) {
         qual = "720";
         rank = 720;
-        label = "Direct 720p HD";
+        label = "Direct 720p HD (High Speed CDN)";
       } else if (text.includes("480") || href.includes("480p")) {
         qual = "480";
         rank = 480;
-        label = "Direct 480p SD";
+        label = "Direct 480p SD (High Speed CDN)";
       } else if (text.includes("360") || href.includes("360p") || href.includes("_360")) {
         qual = "360";
         rank = 360;
-        label = "Direct 360p";
+        label = "Direct 360p (High Speed CDN)";
       }
 
       if (seenQualities.has(qual)) return;
@@ -171,7 +221,27 @@ var getStream = async function (params) {
       rawVariants.push({ label: label, url: href, quality: qual, rank: rank });
     });
 
-    rawVariants.sort(function (a, b) { return b.rank - a.rank; });
+    rawVariants.sort(function (a, b) {
+      return b.rank - a.rank;
+    });
+
+    // Resolve direct CDN links in parallel to completely eliminate DDoS-guard 302 hop latency
+    await Promise.all(
+      rawVariants.map(async function (item) {
+        try {
+          var direct = await resolveDirectUrl(item.url, axios, defaultHeaders);
+          if (direct && direct.startsWith("http")) {
+            item.url = direct;
+          }
+        } catch (e) {}
+      })
+    );
+
+    var streamHeaders = {
+      Referer: baseUrl + "/",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    };
 
     for (var k = 0; k < rawVariants.length; k++) {
       var v = rawVariants[k];
@@ -180,7 +250,7 @@ var getStream = async function (params) {
         link: v.url,
         type: "mp4",
         quality: v.quality,
-        headers: defaultHeaders,
+        headers: streamHeaders,
       });
     }
 
