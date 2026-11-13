@@ -1,0 +1,37 @@
+name: Auto-Update Provider Domains
+
+on:
+  schedule:
+    # Run every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-domains:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check and update domains
+        run: python3 scripts/check_domains.py
+
+      - name: Commit and push changes if updated
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain urls.json)" ]; then
+            git add urls.json
+            git commit -m "chore(auto): update provider domains [skip ci]"
+            git push
+          else
+            echo "All domains are up-to-date."
+          fi

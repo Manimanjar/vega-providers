@@ -1,0 +1,11 @@
+{
+  "xvideos": {
+    "name": "XVideos",
+    "url": "https://www.xvideos.com",
+    "mirrors": [
+      "https://www.xvideos.com",
+      "https://www.xvideos2.com",
+      "https://www.xvideos3.com"
+    ]
+  }
+}

@@ -1,19 +1,75 @@
 // @vega-provider xvideos
-// @vega-version 1.0
+// @vega-version 1.1
 "use strict";
 
+var URLS_ENDPOINT =
+  "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
 var DEFAULT_BASE_URL = "https://www.xvideos.com";
+var memoryCache = { data: null, expiresAt: 0 };
 
-async function getBase(kvStore) {
+async function getBase(kvStore, axios) {
+  // 1. User manual override from Provider Settings
   if (kvStore && typeof kvStore.get === "function") {
     try {
       var custom = await kvStore.get("baseUrlOverride");
       if (custom && typeof custom === "string" && custom.trim().length > 0) {
-        return custom.trim().replace(/\/+$/, "");
+        var cleanCustom = custom.trim().replace(/\/+$/, "");
+        if (cleanCustom !== DEFAULT_BASE_URL) {
+          return cleanCustom;
+        }
       }
     } catch (e) {}
   }
+
+  // 2. Fetch live remote registry from GitHub
+  var now = Date.now();
+  if (memoryCache.data && now < memoryCache.expiresAt) {
+    var cachedEntry = memoryCache.data["xvideos"];
+    if (cachedEntry && cachedEntry.url) {
+      return cachedEntry.url.replace(/\/+$/, "");
+    }
+  }
+
+  if (axios) {
+    try {
+      var res = await axios.get(URLS_ENDPOINT, { timeout: 4000 });
+      if (res.data && typeof res.data === "object") {
+        memoryCache.data = res.data;
+        memoryCache.expiresAt = now + 3600000;
+        var entry = res.data["xvideos"];
+        if (entry && entry.url) {
+          return entry.url.replace(/\/+$/, "");
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 3. Fallback to runtime learned domain
+  if (kvStore && typeof kvStore.get === "function") {
+    try {
+      var learned = await kvStore.get("xvideos_learnedDomain");
+      if (learned && typeof learned === "string" && learned.startsWith("http")) {
+        return learned.replace(/\/+$/, "");
+      }
+    } catch (e) {}
+  }
+
   return DEFAULT_BASE_URL;
+}
+
+function updateLearnedDomain(res, baseUrl, kvStore) {
+  try {
+    var finalUrl =
+      (res && res.request && (res.request.responseURL || (res.request.res && res.request.res.responseUrl))) ||
+      (res && res.config && res.config.url);
+    if (finalUrl && typeof finalUrl === "string") {
+      var parsed = new URL(finalUrl);
+      var origin = parsed.origin;
+      if (origin && origin !== baseUrl && kvStore && typeof kvStore.set === "function") {
+        kvStore.set("xvideos_learnedDomain", origin);
+      }
+    }
+  } catch (e) {}
 }
 
 async function parseVideoGrid(options) {
@@ -23,6 +79,7 @@ async function parseVideoGrid(options) {
   var cheerio = options.cheerio;
   var commonHeaders = options.commonHeaders;
   var signal = options.signal;
+  var kvStore = options.kvStore;
 
   try {
     var res = await axios.get(url, {
@@ -32,7 +89,10 @@ async function parseVideoGrid(options) {
         Referer: baseUrl,
       }),
       signal: signal,
+      maxRedirects: 5,
     });
+
+    updateLearnedDomain(res, baseUrl, kvStore);
 
     var html = res.data;
     var $ = cheerio.load(html);
@@ -91,7 +151,7 @@ var getPosts = async function (params) {
   var commonHeaders = providerContext.commonHeaders;
   var kvStore = providerContext.kvStore;
 
-  var baseUrl = await getBase(kvStore);
+  var baseUrl = await getBase(kvStore, axios);
   var pageIndex = Math.max(0, page - 1);
   var targetUrl = baseUrl + filter;
 
@@ -112,6 +172,7 @@ var getPosts = async function (params) {
     cheerio: cheerio,
     commonHeaders: commonHeaders,
     signal: signal,
+    kvStore: kvStore,
   });
 };
 
@@ -126,7 +187,7 @@ var getSearchPosts = async function (params) {
   var commonHeaders = providerContext.commonHeaders;
   var kvStore = providerContext.kvStore;
 
-  var baseUrl = await getBase(kvStore);
+  var baseUrl = await getBase(kvStore, axios);
   var pageIndex = Math.max(0, page - 1);
   var targetUrl = baseUrl + "/?k=" + encodeURIComponent(searchQuery) + "&p=" + pageIndex;
 
@@ -137,6 +198,7 @@ var getSearchPosts = async function (params) {
     cheerio: cheerio,
     commonHeaders: commonHeaders,
     signal: signal,
+    kvStore: kvStore,
   });
 };
 
