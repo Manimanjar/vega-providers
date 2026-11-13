@@ -1,5 +1,5 @@
 // @vega-provider xvideos
-// @vega-version 1.0
+// @vega-version 1.2
 "use strict";
 
 var getSettingsSchema = async function () {
