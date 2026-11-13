@@ -1,5 +1,5 @@
 // @vega-provider xvideos
-// @vega-version 1.1
+// @vega-version 1.2
 "use strict";
 
 var URLS_ENDPOINT =
@@ -7,8 +7,10 @@ var URLS_ENDPOINT =
 var DEFAULT_BASE_URL = "https://www.xvideos.com";
 var memoryCache = { data: null, expiresAt: 0 };
 
+// Global deduplication cache across all categories
+var seenVideoIds = new Set();
+
 async function getBase(kvStore, axios) {
-  // 1. User manual override from Provider Settings
   if (kvStore && typeof kvStore.get === "function") {
     try {
       var custom = await kvStore.get("baseUrlOverride");
@@ -21,7 +23,6 @@ async function getBase(kvStore, axios) {
     } catch (e) {}
   }
 
-  // 2. Fetch live remote registry from GitHub
   var now = Date.now();
   if (memoryCache.data && now < memoryCache.expiresAt) {
     var cachedEntry = memoryCache.data["xvideos"];
@@ -44,7 +45,6 @@ async function getBase(kvStore, axios) {
     } catch (e) {}
   }
 
-  // 3. Fallback to runtime learned domain
   if (kvStore && typeof kvStore.get === "function") {
     try {
       var learned = await kvStore.get("xvideos_learnedDomain");
@@ -98,6 +98,10 @@ async function parseVideoGrid(options) {
     var $ = cheerio.load(html);
     var posts = [];
 
+    if (seenVideoIds.size > 3000) {
+      seenVideoIds.clear();
+    }
+
     $(".thumb-block").each(function (_, element) {
       var $el = $(element);
       var titleLink = $el.find(".title a, .thumb-inside a").first();
@@ -109,6 +113,15 @@ async function parseVideoGrid(options) {
         titleLink.attr("href") || $el.find("a").first().attr("href") || "";
 
       if (!rawTitle || !rawHref) return;
+
+      var idMatch = rawHref.match(/\/video(?:\.([a-zA-Z0-9_-]+)|\/([0-9]+))/i);
+      var videoId = idMatch ? (idMatch[1] || idMatch[2]) : rawHref;
+
+      // Prevent repeating any video in the same or other categories!
+      if (seenVideoIds.has(videoId)) {
+        return;
+      }
+      seenVideoIds.add(videoId);
 
       var img = $el.find("img").first();
       var image =
@@ -152,17 +165,28 @@ var getPosts = async function (params) {
   var kvStore = providerContext.kvStore;
 
   var baseUrl = await getBase(kvStore, axios);
-  var pageIndex = Math.max(0, page - 1);
-  var targetUrl = baseUrl + filter;
+  var targetUrl = "";
 
-  if (targetUrl.includes("?")) {
-    targetUrl += "&p=" + pageIndex;
-  } else {
-    if (pageIndex > 0) {
-      targetUrl = targetUrl.endsWith("/")
-        ? targetUrl + pageIndex
-        : targetUrl + "/" + pageIndex;
+  if (filter === "/?home=1" || filter === "/") {
+    if (page === 1) {
+      var randomSeed = Math.floor(Math.random() * 8);
+      targetUrl = baseUrl + "/?k=&p=" + randomSeed + "&_t=" + Date.now();
+    } else {
+      targetUrl = baseUrl + "/?k=&p=" + (page - 1);
     }
+  } else if (filter.startsWith("/c/")) {
+    var cleanFilter = filter.replace(/\/+$/, "");
+    if (page === 1) {
+      targetUrl = baseUrl + cleanFilter + "/";
+    } else {
+      targetUrl = baseUrl + cleanFilter + "/" + (page - 1) + "/";
+    }
+  } else if (filter.includes("?")) {
+    var pageIndex = Math.max(0, page - 1);
+    targetUrl = baseUrl + filter + "&p=" + pageIndex;
+  } else {
+    var pageIndex = Math.max(0, page - 1);
+    targetUrl = pageIndex > 0 ? baseUrl + filter + pageIndex + "/" : baseUrl + filter;
   }
 
   return parseVideoGrid({
