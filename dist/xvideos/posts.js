@@ -1,5 +1,5 @@
 // @vega-provider xvideos
-// @vega-version 1.2
+// @vega-version 1.3
 "use strict";
 
 var URLS_ENDPOINT =
@@ -7,7 +7,6 @@ var URLS_ENDPOINT =
 var DEFAULT_BASE_URL = "https://www.xvideos.com";
 var memoryCache = { data: null, expiresAt: 0 };
 
-// Global deduplication cache across all categories
 var seenVideoIds = new Set();
 
 async function getBase(kvStore, axios) {
@@ -86,7 +85,9 @@ async function parseVideoGrid(options) {
       headers: Object.assign({}, commonHeaders, {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Referer: baseUrl,
+        Referer: baseUrl + "/",
+        Origin: baseUrl,
+        Accept: "*/*",
       }),
       signal: signal,
       maxRedirects: 5,
@@ -104,20 +105,28 @@ async function parseVideoGrid(options) {
 
     $(".thumb-block").each(function (_, element) {
       var $el = $(element);
-      var titleLink = $el.find(".title a, .thumb-inside a").first();
-      var rawTitle =
-        titleLink.attr("title") ||
-        titleLink.text().trim() ||
-        $el.find(".title").text().trim();
-      var rawHref =
-        titleLink.attr("href") || $el.find("a").first().attr("href") || "";
+      var titleLink = $el.find("p.title a, .thumb-under p.title a, .title a").first();
+      var rawTitle = titleLink.attr("title") || "";
+      if (!rawTitle) {
+        var cloned = titleLink.clone();
+        cloned.find("span").remove();
+        rawTitle = cloned.text().trim();
+      }
 
-      if (!rawTitle || !rawHref) return;
+      var rawHref =
+        titleLink.attr("href") || $el.find(".thumb-inside a").first().attr("href") || $el.find("a").first().attr("href") || "";
+
+      if (!rawHref) return;
+
+      if (!rawTitle || /^(?:1080p?|720p?|480p?|4k|hd|cc|sd)(?:\s*(?:cc|hd))*$/i.test(rawTitle.trim())) {
+        var parts = rawHref.split("/").filter(Boolean);
+        var slug = parts[parts.length - 1] || "";
+        rawTitle = decodeURIComponent(slug.replace(/[_-]+/g, " "));
+      }
 
       var idMatch = rawHref.match(/\/video(?:\.([a-zA-Z0-9_-]+)|\/([0-9]+))/i);
       var videoId = idMatch ? (idMatch[1] || idMatch[2]) : rawHref;
 
-      // Prevent repeating any video in the same or other categories!
       if (seenVideoIds.has(videoId)) {
         return;
       }
@@ -165,14 +174,15 @@ var getPosts = async function (params) {
   var kvStore = providerContext.kvStore;
 
   var baseUrl = await getBase(kvStore, axios);
-  var targetUrl = "";
 
+  var targetUrl = "";
   if (filter === "/?home=1" || filter === "/") {
     if (page === 1) {
-      var randomSeed = Math.floor(Math.random() * 8);
+      var randomSeed = Math.floor(Math.random() * 8) + 1;
       targetUrl = baseUrl + "/?k=&p=" + randomSeed + "&_t=" + Date.now();
     } else {
-      targetUrl = baseUrl + "/?k=&p=" + (page - 1);
+      var pageIndex = Math.max(0, page - 1);
+      targetUrl = baseUrl + "/?k=&p=" + pageIndex;
     }
   } else if (filter.startsWith("/c/")) {
     var cleanFilter = filter.replace(/\/+$/, "");

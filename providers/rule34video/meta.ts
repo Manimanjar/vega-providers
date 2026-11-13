@@ -71,7 +71,7 @@ export const getMeta = async function ({
         ...commonHeaders,
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Referer: baseUrl,
+        Referer: baseUrl + "/",
       },
       maxRedirects: 5,
     });
@@ -79,7 +79,6 @@ export const getMeta = async function ({
     const html = res.data;
     const $ = cheerio.load(html);
 
-    // If link is a tag/category page, return all videos under this tag as a playlist
     if (url.includes("/tags/") || url.includes("/categories/")) {
       const directLinks: { title: string; link: string; type: "movie" }[] = [];
       $(".item.thumb, [data-video-card-id]").each((_, element) => {
@@ -114,7 +113,7 @@ export const getMeta = async function ({
 
       return {
         title: tagTitle,
-        synopsis: `Collection: ${tagTitle} on Rule34Video (${directLinks.length} videos)`,
+        synopsis: "",
         image: firstImage,
         poster: firstImage,
         imdbId: "",
@@ -139,26 +138,17 @@ export const getMeta = async function ({
       $(".wrap_image img").first().attr("src") ||
       "";
 
-    const tags: string[] = [];
-    $("a.tag_item, .tags a, .tag-list a").each((_, el) => {
-      const tagText = $(el).text().trim();
-      if (tagText && !tags.includes(tagText)) {
-        tags.push(tagText);
-      }
-    });
-
     const is4k = html.includes("2160p") || html.includes("4k") || html.includes("_4k");
     const is1080p = html.includes("1080p");
     const quality = is4k ? "2160p" : (is1080p ? "1080p" : "720p");
 
     return {
       title,
-      synopsis: tags.length > 0 ? `Tags: ${tags.join(", ")}` : title,
+      synopsis: "",
       image,
       poster: image,
       imdbId: "",
       type: "movie",
-      tags: tags.length > 0 ? tags : undefined,
       rating: quality,
       webUrl: url,
       linkList: [

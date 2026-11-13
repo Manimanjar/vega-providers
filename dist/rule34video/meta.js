@@ -1,5 +1,5 @@
 // @vega-provider rule34video
-// @vega-version 1.2
+// @vega-version 1.3
 "use strict";
 
 var URLS_ENDPOINT =
@@ -73,7 +73,7 @@ var getMeta = async function (params) {
       headers: Object.assign({}, commonHeaders, {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Referer: baseUrl,
+        Referer: baseUrl + "/",
       }),
       maxRedirects: 5,
     });
@@ -81,7 +81,6 @@ var getMeta = async function (params) {
     var html = res.data;
     var $ = cheerio.load(html);
 
-    // If link is a tag/category page, return all videos under this tag as a playlist
     if (url.includes("/tags/") || url.includes("/categories/")) {
       var directLinks = [];
       $(".item.thumb, [data-video-card-id]").each(function (_, element) {
@@ -116,7 +115,7 @@ var getMeta = async function (params) {
 
       return {
         title: tagTitle,
-        synopsis: "Collection: " + tagTitle + " on Rule34Video (" + directLinks.length + " videos)",
+        synopsis: "",
         image: firstImage,
         poster: firstImage,
         imdbId: "",
@@ -141,26 +140,17 @@ var getMeta = async function (params) {
       $(".wrap_image img").first().attr("src") ||
       "";
 
-    var tags = [];
-    $("a.tag_item, .tags a, .tag-list a").each(function (_, el) {
-      var tagText = $(el).text().trim();
-      if (tagText && tags.indexOf(tagText) === -1) {
-        tags.push(tagText);
-      }
-    });
-
     var is4k = html.includes("2160p") || html.includes("4k") || html.includes("_4k");
     var is1080p = html.includes("1080p");
     var quality = is4k ? "2160p" : (is1080p ? "1080p" : "720p");
 
     return {
       title: title,
-      synopsis: tags.length > 0 ? "Tags: " + tags.join(", ") : title,
+      synopsis: "",
       image: image,
       poster: image,
       imdbId: "",
       type: "movie",
-      tags: tags.length > 0 ? tags : undefined,
       rating: quality,
       webUrl: url,
       linkList: [
