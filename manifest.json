@@ -7,5 +7,14 @@
     "type": "global",
     "disabled": false,
     "hasSettings": true
+  },
+  {
+    "display_name": "Rule34Video",
+    "value": "rule34video",
+    "version": "1.0",
+    "icon": "https://rule34video.com/apple-touch-icon.png",
+    "type": "global",
+    "disabled": false,
+    "hasSettings": true
   }
 ]

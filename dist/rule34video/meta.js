@@ -1,0 +1,155 @@
+// @vega-provider rule34video
+// @vega-version 1.0
+"use strict";
+
+var URLS_ENDPOINT =
+  "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
+var DEFAULT_BASE_URL = "https://rule34video.com";
+var memoryCache = { data: null, expiresAt: 0 };
+
+async function getBase(kvStore, axios) {
+  if (kvStore && typeof kvStore.get === "function") {
+    try {
+      var custom = await kvStore.get("baseUrlOverride");
+      if (custom && typeof custom === "string" && custom.trim().length > 0) {
+        var cleanCustom = custom.trim().replace(/\/+$/, "");
+        if (cleanCustom !== DEFAULT_BASE_URL) {
+          return cleanCustom;
+        }
+      }
+    } catch (e) {}
+  }
+
+  var now = Date.now();
+  if (memoryCache.data && now < memoryCache.expiresAt) {
+    var cachedEntry = memoryCache.data["rule34video"];
+    if (cachedEntry && cachedEntry.url) {
+      return cachedEntry.url.replace(/\/+$/, "");
+    }
+  }
+
+  if (axios) {
+    try {
+      var res = await axios.get(URLS_ENDPOINT, { timeout: 4000 });
+      if (res.data && typeof res.data === "object") {
+        memoryCache.data = res.data;
+        memoryCache.expiresAt = now + 3600000;
+        var entry = res.data["rule34video"];
+        if (entry && entry.url) {
+          return entry.url.replace(/\/+$/, "");
+        }
+      }
+    } catch (e) {}
+  }
+
+  if (kvStore && typeof kvStore.get === "function") {
+    try {
+      var learned = await kvStore.get("rule34video_learnedDomain");
+      if (learned && typeof learned === "string" && learned.startsWith("http")) {
+        return learned.replace(/\/+$/, "");
+      }
+    } catch (e) {}
+  }
+
+  return DEFAULT_BASE_URL;
+}
+
+var getMeta = async function (params) {
+  var link = params.link;
+  var providerContext = params.providerContext;
+
+  var axios = providerContext.axios;
+  var cheerio = providerContext.cheerio;
+  var commonHeaders = providerContext.commonHeaders;
+  var kvStore = providerContext.kvStore;
+
+  var baseUrl = await getBase(kvStore, axios);
+  var url = link.startsWith("http")
+    ? link
+    : baseUrl + (link.startsWith("/") ? "" : "/") + link;
+
+  try {
+    var res = await axios.get(url, {
+      headers: Object.assign({}, commonHeaders, {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Referer: baseUrl,
+      }),
+      maxRedirects: 5,
+    });
+
+    var html = res.data;
+    var $ = cheerio.load(html);
+
+    var title =
+      $("h1").first().text().trim() ||
+      $("meta[property='og:title']").attr("content") ||
+      $("title").text().replace(/- Rule34Video/i, "").trim() ||
+      "Video";
+
+    var image =
+      $("meta[property='og:image']").attr("content") ||
+      $(".wrap_image img").first().attr("src") ||
+      "";
+
+    var tags = [];
+    $("a.tag_item, .tags a, .tag-list a").each(function (_, el) {
+      var tagText = $(el).text().trim();
+      if (tagText && tags.indexOf(tagText) === -1) {
+        tags.push(tagText);
+      }
+    });
+
+    var is4k = html.indexOf("2160p") !== -1 || html.indexOf("4k") !== -1 || html.indexOf("_4k") !== -1;
+    var is1080p = html.indexOf("1080p") !== -1;
+    var quality = is4k ? "2160p" : (is1080p ? "1080p" : "720p");
+
+    return {
+      title: title,
+      synopsis: tags.length > 0 ? "Tags: " + tags.join(", ") : title,
+      image: image,
+      poster: image,
+      imdbId: "",
+      type: "movie",
+      tags: tags.length > 0 ? tags : undefined,
+      rating: quality,
+      webUrl: url,
+      linkList: [
+        {
+          title: "Stream Video",
+          quality: quality,
+          directLinks: [
+            {
+              title: title,
+              link: url,
+              type: "movie",
+            },
+          ],
+        },
+      ],
+    };
+  } catch (err) {
+    console.error("Rule34Video meta error:", err && err.message ? err.message : err);
+    return {
+      title: "Video Details",
+      synopsis: "",
+      image: "",
+      imdbId: "",
+      type: "movie",
+      linkList: [
+        {
+          title: "Stream Video",
+          directLinks: [
+            {
+              title: "Play",
+              link: url,
+              type: "movie",
+            },
+          ],
+        },
+      ],
+    };
+  }
+};
+
+exports.getMeta = getMeta;

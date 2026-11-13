@@ -7,5 +7,12 @@
       "https://www.xvideos2.com",
       "https://www.xvideos3.com"
     ]
+  },
+  "rule34video": {
+    "name": "Rule34Video",
+    "url": "https://rule34video.com",
+    "mirrors": [
+      "https://rule34video.com"
+    ]
   }
 }
