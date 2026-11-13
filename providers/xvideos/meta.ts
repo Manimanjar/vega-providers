@@ -1,0 +1,114 @@
+import { Info, ProviderContext } from "../types";
+
+export const getMeta = async function ({
+  link,
+  providerContext,
+}: {
+  link: string;
+  providerContext: ProviderContext;
+}): Promise<Info> {
+  const { axios, cheerio, commonHeaders, kvStore } = providerContext;
+
+  let baseUrl = "https://www.xvideos.com";
+  if (kvStore && typeof kvStore.get === "function") {
+    try {
+      const custom = await kvStore.get("baseUrlOverride");
+      if (custom && typeof custom === "string" && custom.trim().length > 0) {
+        baseUrl = custom.trim().replace(/\/+$/, "");
+      }
+    } catch (e) {}
+  }
+
+  const url = link.startsWith("http")
+    ? link
+    : `${baseUrl}${link.startsWith("/") ? "" : "/"}${link}`;
+
+  try {
+    const res = await axios.get(url, {
+      headers: {
+        ...commonHeaders,
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Referer: baseUrl,
+      },
+    });
+
+    const html = res.data;
+    const $ = cheerio.load(html);
+
+    // Extract title from html5player or DOM
+    const playerTitleMatch = html.match(/html5player\.setVideoTitle\s*\(\s*['"]([^'"]+)['"]\s*\)/i);
+    const title =
+      (playerTitleMatch ? playerTitleMatch[1] : null) ||
+      $("h2.page-title, .page-title, title").first().text().replace(/- XVIDEOS\.COM/i, "").trim() ||
+      "Video";
+
+    // Extract poster thumbnail
+    const playerThumbMatch = html.match(/html5player\.setThumbUrl\s*\(\s*['"]([^'"]+)['"]\s*\)/i);
+    const playerThumb169Match = html.match(/html5player\.setThumbUrl169\s*\(\s*['"]([^'"]+)['"]\s*\)/i);
+    const image =
+      (playerThumb169Match ? playerThumb169Match[1] : null) ||
+      (playerThumbMatch ? playerThumbMatch[1] : null) ||
+      $('meta[property="og:image"]').attr("content") ||
+      "";
+
+    // Extract tags
+    const tags: string[] = [];
+    $(".video-tags a, .tags-list a, .video-metadata a").each((_, el) => {
+      const tagText = $(el).text().trim();
+      if (tagText && !tags.includes(tagText)) {
+        tags.push(tagText);
+      }
+    });
+
+    // Extract duration or quality indicator
+    const duration = $(".duration, .video-duration").first().text().trim();
+    const synopsis = tags.length > 0 ? `Tags: ${tags.join(", ")}` : title;
+
+    return {
+      title,
+      synopsis,
+      image,
+      poster: image,
+      imdbId: "",
+      type: "movie",
+      tags: tags.length > 0 ? tags : undefined,
+      rating: duration || undefined,
+      webUrl: url,
+      linkList: [
+        {
+          title: "Stream Video",
+          quality: html.includes("setVideoUrlHigh") || html.includes("1080p") ? "1080p" : "720p",
+          directLinks: [
+            {
+              title: title,
+              link: url,
+              type: "movie",
+            },
+          ],
+        },
+      ],
+    };
+  } catch (err: any) {
+    console.error("XVideos meta error:", err?.message || err);
+    return {
+      title: "Video Details",
+      synopsis: "",
+      image: "",
+      imdbId: "",
+      type: "movie",
+      linkList: [
+        {
+          title: "Stream Video",
+          directLinks: [
+            {
+              title: "Play",
+              link: url,
+              type: "movie",
+            },
+          ],
+        },
+      ],
+    };
+  }
+};
