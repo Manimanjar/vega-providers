@@ -1,5 +1,5 @@
 // @vega-provider rule34video
-// @vega-version 1.4
+// @vega-version 1.5
 "use strict";
 
 var URLS_ENDPOINT =
@@ -10,6 +10,101 @@ var memoryCache = { data: null, expiresAt: 0 };
 var seenVideoIds = new Set();
 
 var TAGS_300 = [
+{
+    "title": "Incest",
+    "filter": "/tags/incest/",
+    "videos": 4123
+  },
+  {
+    "title": "Family",
+    "filter": "/search/family/",
+    "videos": 2500
+  },
+  {
+    "title": "Sister",
+    "filter": "/tags/sister/",
+    "videos": 1211
+  },
+  {
+    "title": "Sisters",
+    "filter": "/tags/sisters/",
+    "videos": 559
+  },
+  {
+    "title": "Stepsister",
+    "filter": "/tags/stepsister/",
+    "videos": 163
+  },
+  {
+    "title": "Big Sister",
+    "filter": "/search/big-sister/",
+    "videos": 500
+  },
+  {
+    "title": "Little Sister",
+    "filter": "/search/little-sister/",
+    "videos": 450
+  },
+  {
+    "title": "Mother",
+    "filter": "/tags/mother/",
+    "videos": 1943
+  },
+  {
+    "title": "Stepmom",
+    "filter": "/tags/stepmom/",
+    "videos": 243
+  },
+  {
+    "title": "Mother and Son",
+    "filter": "/tags/mother-and-son/",
+    "videos": 824
+  },
+  {
+    "title": "Mother and Daughter",
+    "filter": "/tags/mother-and-daughter/",
+    "videos": 681
+  },
+  {
+    "title": "Brother",
+    "filter": "/tags/brother/",
+    "videos": 640
+  },
+  {
+    "title": "Brothers",
+    "filter": "/tags/brothers/",
+    "videos": 55
+  },
+  {
+    "title": "Stepbrother",
+    "filter": "/search/stepbrother/",
+    "videos": 220
+  },
+  {
+    "title": "Stepson",
+    "filter": "/tags/stepson/",
+    "videos": 102
+  },
+  {
+    "title": "Aunt",
+    "filter": "/tags/aunt/",
+    "videos": 357
+  },
+  {
+    "title": "Aunty",
+    "filter": "/search/aunty/",
+    "videos": 180
+  },
+  {
+    "title": "NTR family",
+    "filter": "/tags/ntr-family/",
+    "videos": 84
+  },
+  {
+    "title": "Spy x Family",
+    "filter": "/tags/spy-x-family/",
+    "videos": 483
+  },
   {
     "title": "1boy",
     "filter": "/tags/1boy/",
@@ -769,11 +864,6 @@ var TAGS_300 = [
     "title": "Impregnation",
     "filter": "/tags/impregnation/",
     "videos": 3894
-  },
-  {
-    "title": "Incest",
-    "filter": "/tags/incest/",
-    "videos": 4123
   },
   {
     "title": "Insect",
@@ -1631,6 +1721,17 @@ async function parseVideoGrid(options) {
         "";
 
       var duration = $el.find(".time").first().text().trim();
+      var durationSec = 0;
+      if (duration) {
+        var dParts = duration.split(":").map(function(p) { return parseInt(p, 10) || 0; });
+        if (dParts.length === 3) durationSec = dParts[0] * 3600 + dParts[1] * 60 + dParts[2];
+        else if (dParts.length === 2) durationSec = dParts[0] * 60 + dParts[1];
+        else if (dParts.length === 1) durationSec = dParts[0];
+      }
+      // Filter out videos under 2 minutes (120 seconds)
+      if (durationSec > 0 && durationSec < 120) {
+        return;
+      }
       var isHd = $el.find(".quality").length > 0;
       var cornerTag = isHd ? "HD" : undefined;
 
@@ -1643,10 +1744,12 @@ async function parseVideoGrid(options) {
         link: absoluteLink,
         image: image,
         tag: duration || undefined,
+        _dur: durationSec,
         cornerTag: cornerTag,
       });
     });
 
+    posts.sort(function (a, b) { return (b._dur || 0) - (a._dur || 0); });
     return posts;
   } catch (err) {
     console.error("Rule34Video posts error:", err && err.message ? err.message : err);
@@ -1666,6 +1769,19 @@ var getPosts = async function (params) {
   var kvStore = providerContext.kvStore;
 
   var baseUrl = await getBase(kvStore, axios);
+
+  if (filter === "/family/" || filter === "/family") {
+    targetUrl = page > 1 ? baseUrl + "/search/family/" + page + "/" : baseUrl + "/search/family/";
+    return parseVideoGrid({
+      url: targetUrl,
+      baseUrl: baseUrl,
+      axios: axios,
+      cheerio: cheerio,
+      commonHeaders: commonHeaders,
+      signal: signal,
+      kvStore: kvStore,
+    });
+  }
 
   if (filter === "/tags/" || filter === "/tags") {
     return TAGS_300.map(function (item) {

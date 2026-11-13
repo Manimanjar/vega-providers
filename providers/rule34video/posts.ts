@@ -1,13 +1,14 @@
 import { Post, ProviderContext } from "../types";
+"use strict";
 
-const URLS_ENDPOINT =
+var URLS_ENDPOINT =
   "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
-const DEFAULT_BASE_URL = "https://rule34video.com";
-let memoryCache = { data: null as any, expiresAt: 0 };
+var DEFAULT_BASE_URL = "https://rule34video.com";
+var memoryCache = { data: null, expiresAt: 0 };
 
-const seenVideoIds = new Set<string>();
+var seenVideoIds = new Set();
 
-const TAGS_300 = [
+var TAGS_300 = [
   {
     "title": "1boy",
     "filter": "/tags/1boy/",
@@ -1510,12 +1511,12 @@ const TAGS_300 = [
   }
 ];
 
-async function getBase(kvStore: any, axios: any): Promise<string> {
+async function getBase(kvStore, axios) {
   if (kvStore && typeof kvStore.get === "function") {
     try {
-      const custom = await kvStore.get("baseUrlOverride");
+      var custom = await kvStore.get("baseUrlOverride");
       if (custom && typeof custom === "string" && custom.trim().length > 0) {
-        const cleanCustom = custom.trim().replace(/\/+$/, "");
+        var cleanCustom = custom.trim().replace(/\/+$/, "");
         if (cleanCustom !== DEFAULT_BASE_URL) {
           return cleanCustom;
         }
@@ -1523,9 +1524,9 @@ async function getBase(kvStore: any, axios: any): Promise<string> {
     } catch (e) {}
   }
 
-  const now = Date.now();
+  var now = Date.now();
   if (memoryCache.data && now < memoryCache.expiresAt) {
-    const cachedEntry = memoryCache.data["rule34video"];
+    var cachedEntry = memoryCache.data["rule34video"];
     if (cachedEntry && cachedEntry.url) {
       return cachedEntry.url.replace(/\/+$/, "");
     }
@@ -1533,11 +1534,11 @@ async function getBase(kvStore: any, axios: any): Promise<string> {
 
   if (axios) {
     try {
-      const res = await axios.get(URLS_ENDPOINT, { timeout: 4000 });
+      var res = await axios.get(URLS_ENDPOINT, { timeout: 4000 });
       if (res.data && typeof res.data === "object") {
         memoryCache.data = res.data;
         memoryCache.expiresAt = now + 3600000;
-        const entry = res.data["rule34video"];
+        var entry = res.data["rule34video"];
         if (entry && entry.url) {
           return entry.url.replace(/\/+$/, "");
         }
@@ -1547,7 +1548,7 @@ async function getBase(kvStore: any, axios: any): Promise<string> {
 
   if (kvStore && typeof kvStore.get === "function") {
     try {
-      const learned = await kvStore.get("rule34video_learnedDomain");
+      var learned = await kvStore.get("rule34video_learnedDomain");
       if (learned && typeof learned === "string" && learned.startsWith("http")) {
         return learned.replace(/\/+$/, "");
       }
@@ -1557,15 +1558,14 @@ async function getBase(kvStore: any, axios: any): Promise<string> {
   return DEFAULT_BASE_URL;
 }
 
-function updateLearnedDomain(res: any, baseUrl: string, kvStore: any) {
+function updateLearnedDomain(res, baseUrl, kvStore) {
   try {
-    const finalUrl =
-      res?.request?.responseURL ||
-      res?.request?.res?.responseUrl ||
-      res?.config?.url;
+    var finalUrl =
+      (res && res.request && (res.request.responseURL || (res.request.res && res.request.res.responseUrl))) ||
+      (res && res.config && res.config.url);
     if (finalUrl && typeof finalUrl === "string") {
-      const parsed = new URL(finalUrl);
-      const origin = parsed.origin;
+      var parsed = new URL(finalUrl);
+      var origin = parsed.origin;
       if (origin && origin !== baseUrl && kvStore && typeof kvStore.set === "function") {
         kvStore.set("rule34video_learnedDomain", origin);
       }
@@ -1573,171 +1573,193 @@ function updateLearnedDomain(res: any, baseUrl: string, kvStore: any) {
   } catch (e) {}
 }
 
-async function parseVideoGrid(options: {
-  url: string;
-  baseUrl: string;
-  axios: any;
-  cheerio: any;
-  commonHeaders: any;
-  signal?: AbortSignal;
-  kvStore: any;
-}): Promise<Post[]> {
-  const { url, baseUrl, axios, cheerio, commonHeaders, signal, kvStore } = options;
+async function parseVideoGrid(options) {
+  var url = options.url;
+  var baseUrl = options.baseUrl;
+  var axios = options.axios;
+  var cheerio = options.cheerio;
+  var commonHeaders = options.commonHeaders;
+  var signal = options.signal;
+  var kvStore = options.kvStore;
 
   try {
-    const res = await axios.get(url, {
-      headers: {
-        ...commonHeaders,
+    var res = await axios.get(url, {
+      headers: Object.assign({}, commonHeaders, {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         Referer: baseUrl + "/",
-      },
-      signal,
+      }),
+      signal: signal,
       maxRedirects: 5,
     });
 
     updateLearnedDomain(res, baseUrl, kvStore);
 
-    const html = res.data;
-    const $ = cheerio.load(html);
-    const posts: Post[] = [];
+    var html = res.data;
+    var $ = cheerio.load(html);
+    var posts = [];
 
     if (seenVideoIds.size > 3000) {
       seenVideoIds.clear();
     }
 
-    $(".item.thumb, [data-video-card-id]").each((_, element) => {
-      const $el = $(element);
-      const linkEl = $el.find("a.th, a[href*=\"/video/\"]").first();
-      const rawHref = linkEl.attr("href") || "";
-      const rawTitle =
+    $(".item.thumb, [data-video-card-id]").each(function (_, element) {
+      var $el = $(element);
+      var linkEl = $el.find("a.th, a[href*=\"/video/\"]").first();
+      var rawHref = linkEl.attr("href") || "";
+      var rawTitle =
         linkEl.attr("title") ||
         $el.find("img.thumb").attr("alt") ||
         linkEl.text().trim();
 
       if (!rawTitle || !rawHref) return;
 
-      const idMatch = rawHref.match(/\/video\/([0-9]+)/i);
-      const videoId = idMatch ? idMatch[1] : rawHref;
+      var idMatch = rawHref.match(/\/video\/([0-9]+)/i);
+      var videoId = idMatch ? idMatch[1] : rawHref;
 
       if (seenVideoIds.has(videoId)) {
         return;
       }
       seenVideoIds.add(videoId);
 
-      const img = $el.find("img.thumb, img").first();
-      const image =
+      var img = $el.find("img.thumb, img").first();
+      var image =
         img.attr("data-rd-jpg") ||
         img.attr("data-src") ||
         img.attr("src") ||
         "";
 
-      const duration = $el.find(".time").first().text().trim();
-      const isHd = $el.find(".quality").length > 0;
-      const cornerTag = isHd ? "HD" : undefined;
+      var duration = $el.find(".time").first().text().trim();
+      var durationSec = 0;
+      if (duration) {
+        var dParts = duration.split(":").map(function(p) { return parseInt(p, 10) || 0; });
+        if (dParts.length === 3) durationSec = dParts[0] * 3600 + dParts[1] * 60 + dParts[2];
+        else if (dParts.length === 2) durationSec = dParts[0] * 60 + dParts[1];
+        else if (dParts.length === 1) durationSec = dParts[0];
+      }
+      // Filter out videos under 2 minutes (120 seconds)
+      if (durationSec > 0 && durationSec < 120) {
+        return;
+      }
+      var isHd = $el.find(".quality").length > 0;
+      var cornerTag = isHd ? "HD" : undefined;
 
-      const absoluteLink = rawHref.startsWith("http")
+      var absoluteLink = rawHref.startsWith("http")
         ? rawHref
-        : `${baseUrl}${rawHref.startsWith("/") ? "" : "/"}${rawHref}`;
+        : baseUrl + (rawHref.startsWith("/") ? "" : "/") + rawHref;
 
       posts.push({
         title: rawTitle,
         link: absoluteLink,
-        image,
+        image: image,
         tag: duration || undefined,
-        cornerTag,
+        _dur: durationSec,
+        cornerTag: cornerTag,
       });
     });
 
+    posts.sort(function (a, b) { return (b._dur || 0) - (a._dur || 0); });
     return posts;
-  } catch (err: any) {
-    console.error("Rule34Video posts error:", err?.message || err);
+  } catch (err) {
+    console.error("Rule34Video posts error:", err && err.message ? err.message : err);
     return [];
   }
 }
 
-export const getPosts = async function ({
-  filter,
-  page,
-  signal,
-  providerContext,
-}: {
-  filter: string;
-  page: number;
-  signal?: AbortSignal;
-  providerContext: ProviderContext;
-}): Promise<Post[]> {
-  const { axios, cheerio, commonHeaders, kvStore } = providerContext;
-  const baseUrl = await getBase(kvStore, axios);
+export const getPosts = async function (params) {
+  var filter = params.filter;
+  var page = params.page;
+  var signal = params.signal;
+  var providerContext = params.providerContext;
 
-  // Tags Catalogue: return all 300 alphabetically sorted, unique tags
-  if (filter === "/tags/" || filter === "/tags") {
-    return TAGS_300.map(item => ({
-      title: item.title,
-      link: item.filter.startsWith("http") ? item.filter : `${baseUrl}${item.filter.startsWith("/") ? "" : "/"}${item.filter}`,
-      image: `${baseUrl}/apple-touch-icon.png`,
-      cornerTag: "TAG",
-    }));
+  var axios = providerContext.axios;
+  var cheerio = providerContext.cheerio;
+  var commonHeaders = providerContext.commonHeaders;
+  var kvStore = providerContext.kvStore;
+
+  var baseUrl = await getBase(kvStore, axios);
+
+  if (filter === "/family/" || filter === "/family") {
+    targetUrl = page > 1 ? baseUrl + "/search/family/" + page + "/" : baseUrl + "/search/family/";
+    return parseVideoGrid({
+      url: targetUrl,
+      baseUrl: baseUrl,
+      axios: axios,
+      cheerio: cheerio,
+      commonHeaders: commonHeaders,
+      signal: signal,
+      kvStore: kvStore,
+    });
   }
 
-  let targetUrl = "";
+  if (filter === "/tags/" || filter === "/tags") {
+    return TAGS_300.map(function (item) {
+      return {
+        title: item.title,
+        link: item.filter.startsWith("http") ? item.filter : baseUrl + (item.filter.startsWith("/") ? "" : "/") + item.filter,
+        image: baseUrl + "/apple-touch-icon.png",
+        cornerTag: "TAG",
+      };
+    });
+  }
+
+  var targetUrl = "";
   if (filter === "/?home=1" || filter === "/") {
     if (page === 1) {
-      const randomSeed = Math.floor(Math.random() * 8) + 1;
-      targetUrl = randomSeed > 1 ? `${baseUrl}/${randomSeed}/?_t=${Date.now()}` : `${baseUrl}/?_t=${Date.now()}`;
+      var randomSeed = Math.floor(Math.random() * 8) + 1;
+      targetUrl = randomSeed > 1 ? baseUrl + "/" + randomSeed + "/?_t=" + Date.now() : baseUrl + "/?_t=" + Date.now();
     } else {
-      targetUrl = `${baseUrl}/${page}/`;
+      targetUrl = baseUrl + "/" + page + "/";
     }
   } else if (filter.startsWith("/search/")) {
-    const cleanSearch = filter.replace(/\/+$/, "");
-    targetUrl = page > 1 ? `${baseUrl}${cleanSearch}/${page}/` : `${baseUrl}${cleanSearch}/`;
+    var cleanSearch = filter.replace(/\/+$/, "");
+    targetUrl = page > 1 ? baseUrl + cleanSearch + "/" + page + "/" : baseUrl + cleanSearch + "/";
   } else if (filter.startsWith("/tags/")) {
     if (filter.includes("?")) {
-      targetUrl = page > 1 ? `${baseUrl}${filter}&from=${page}` : `${baseUrl}${filter}`;
+      targetUrl = page > 1 ? baseUrl + filter + "&from=" + page : baseUrl + filter;
     } else {
-      const cleanTag = filter.replace(/\/+$/, "");
-      targetUrl = page > 1 ? `${baseUrl}${cleanTag}/${page}/` : `${baseUrl}${cleanTag}/`;
+      var cleanTag = filter.replace(/\/+$/, "");
+      targetUrl = page > 1 ? baseUrl + cleanTag + "/" + page + "/" : baseUrl + cleanTag + "/";
     }
   } else if (filter.includes("?")) {
-    targetUrl = page > 1 ? `${baseUrl}${filter}&from=${page}` : `${baseUrl}${filter}`;
+    targetUrl = page > 1 ? baseUrl + filter + "&from=" + page : baseUrl + filter;
   } else {
-    targetUrl = page > 1 ? `${baseUrl}${filter}${page}/` : `${baseUrl}${filter}`;
+    targetUrl = page > 1 ? baseUrl + filter + page + "/" : baseUrl + filter;
   }
 
   return parseVideoGrid({
     url: targetUrl,
-    baseUrl,
-    axios,
-    cheerio,
-    commonHeaders,
-    signal,
-    kvStore,
+    baseUrl: baseUrl,
+    axios: axios,
+    cheerio: cheerio,
+    commonHeaders: commonHeaders,
+    signal: signal,
+    kvStore: kvStore,
   });
 };
 
-export const getSearchPosts = async function ({
-  searchQuery,
-  page,
-  signal,
-  providerContext,
-}: {
-  searchQuery: string;
-  page: number;
-  signal?: AbortSignal;
-  providerContext: ProviderContext;
-}): Promise<Post[]> {
-  const { axios, cheerio, commonHeaders, kvStore } = providerContext;
-  const baseUrl = await getBase(kvStore, axios);
-  const cleanQuery = encodeURIComponent(searchQuery.trim().replace(/\s+/g, "-"));
-  const targetUrl = page > 1 ? `${baseUrl}/search/${cleanQuery}/${page}/` : `${baseUrl}/search/${cleanQuery}/`;
+export const getSearchPosts = async function (params) {
+  var searchQuery = params.searchQuery;
+  var page = params.page;
+  var signal = params.signal;
+  var providerContext = params.providerContext;
+
+  var axios = providerContext.axios;
+  var cheerio = providerContext.cheerio;
+  var commonHeaders = providerContext.commonHeaders;
+  var kvStore = providerContext.kvStore;
+
+  var baseUrl = await getBase(kvStore, axios);
+  var cleanQuery = encodeURIComponent(searchQuery.trim().replace(/\s+/g, "-"));
+  var targetUrl = page > 1 ? baseUrl + "/search/" + cleanQuery + "/" + page + "/" : baseUrl + "/search/" + cleanQuery + "/";
 
   return parseVideoGrid({
     url: targetUrl,
-    baseUrl,
-    axios,
-    cheerio,
-    commonHeaders,
-    signal,
-    kvStore,
+    baseUrl: baseUrl,
+    axios: axios,
+    cheerio: cheerio,
+    commonHeaders: commonHeaders,
+    signal: signal,
+    kvStore: kvStore,
   });
 };

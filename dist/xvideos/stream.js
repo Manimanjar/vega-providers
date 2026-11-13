@@ -1,5 +1,5 @@
 // @vega-provider xvideos
-// @vega-version 1.4
+// @vega-version 1.5
 "use strict";
 
 var URLS_ENDPOINT =

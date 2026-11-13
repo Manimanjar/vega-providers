@@ -1,8 +1,9 @@
 // @vega-provider xvideos
-// @vega-version 1.4
+// @vega-version 1.5
 "use strict";
 
 var catalog = [
+  { title: "Family", filter: "/family/" },
   { title: "Homepage", filter: "/?home=1" },
   { title: "Amateur", filter: "/c/Amateur-65/" },
   { title: "Asian", filter: "/c/Asian_Woman-32/" },

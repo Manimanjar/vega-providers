@@ -1,16 +1,17 @@
 // @vega-provider rule34video
-// @vega-version 1.4
+// @vega-version 1.5
 "use strict";
 
 var catalog = [
   { title: "Homepage", filter: "/?home=1" },
+  { title: "Family", filter: "/family/" },
   { title: "Tags", filter: "/tags/" },
   { title: "4K Ultra HD", filter: "/search/4k/" },
   { title: "1080p Full HD", filter: "/search/1080p/" }
 ];
 
 var genres = [
-  {
+{
     "title": "For you",
     "filter": "/for-you/"
   },
@@ -37,6 +38,101 @@ var genres = [
   {
     "title": "Longest",
     "filter": "/?sort_by=duration"
+  },
+  {
+    "title": "Incest",
+    "filter": "/tags/incest/",
+    "videos": 4123
+  },
+  {
+    "title": "Family",
+    "filter": "/search/family/",
+    "videos": 2500
+  },
+  {
+    "title": "Sister",
+    "filter": "/tags/sister/",
+    "videos": 1211
+  },
+  {
+    "title": "Sisters",
+    "filter": "/tags/sisters/",
+    "videos": 559
+  },
+  {
+    "title": "Stepsister",
+    "filter": "/tags/stepsister/",
+    "videos": 163
+  },
+  {
+    "title": "Big Sister",
+    "filter": "/search/big-sister/",
+    "videos": 500
+  },
+  {
+    "title": "Little Sister",
+    "filter": "/search/little-sister/",
+    "videos": 450
+  },
+  {
+    "title": "Mother",
+    "filter": "/tags/mother/",
+    "videos": 1943
+  },
+  {
+    "title": "Stepmom",
+    "filter": "/tags/stepmom/",
+    "videos": 243
+  },
+  {
+    "title": "Mother and Son",
+    "filter": "/tags/mother-and-son/",
+    "videos": 824
+  },
+  {
+    "title": "Mother and Daughter",
+    "filter": "/tags/mother-and-daughter/",
+    "videos": 681
+  },
+  {
+    "title": "Brother",
+    "filter": "/tags/brother/",
+    "videos": 640
+  },
+  {
+    "title": "Brothers",
+    "filter": "/tags/brothers/",
+    "videos": 55
+  },
+  {
+    "title": "Stepbrother",
+    "filter": "/search/stepbrother/",
+    "videos": 220
+  },
+  {
+    "title": "Stepson",
+    "filter": "/tags/stepson/",
+    "videos": 102
+  },
+  {
+    "title": "Aunt",
+    "filter": "/tags/aunt/",
+    "videos": 357
+  },
+  {
+    "title": "Aunty",
+    "filter": "/search/aunty/",
+    "videos": 180
+  },
+  {
+    "title": "NTR family",
+    "filter": "/tags/ntr-family/",
+    "videos": 84
+  },
+  {
+    "title": "Spy x Family",
+    "filter": "/tags/spy-x-family/",
+    "videos": 483
   },
   {
     "title": "1boy",
@@ -797,11 +893,6 @@ var genres = [
     "title": "Impregnation",
     "filter": "/tags/impregnation/",
     "videos": 3894
-  },
-  {
-    "title": "Incest",
-    "filter": "/tags/incest/",
-    "videos": 4123
   },
   {
     "title": "Insect",

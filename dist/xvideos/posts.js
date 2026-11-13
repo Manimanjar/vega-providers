@@ -1,5 +1,5 @@
 // @vega-provider xvideos
-// @vega-version 1.4
+// @vega-version 1.5
 "use strict";
 
 var URLS_ENDPOINT =
@@ -140,6 +140,15 @@ async function parseVideoGrid(options) {
         "";
 
       var duration = $el.find(".duration, .video-duration").first().text().trim();
+      var durationSec = 0;
+      if (duration) {
+        var minMatch = duration.match(/(\d+)\s*min/i);
+        var secMatch = duration.match(/(\d+)\s*sec/i);
+        var hourMatch = duration.match(/(\d+)\s*h/i);
+        if (hourMatch) durationSec += parseInt(hourMatch[1], 10) * 3600;
+        if (minMatch) durationSec += parseInt(minMatch[1], 10) * 60;
+        if (secMatch) durationSec += parseInt(secMatch[1], 10);
+      }
       var hdTag = $el.find(".video-hd-mark").first().text().trim();
 
       var absoluteLink = rawHref.startsWith("http")
@@ -151,10 +160,12 @@ async function parseVideoGrid(options) {
         link: absoluteLink,
         image: image,
         tag: duration || undefined,
+        _dur: durationSec,
         cornerTag: hdTag || undefined,
       });
     });
 
+    posts.sort(function (a, b) { return (b._dur || 0) - (a._dur || 0); });
     return posts;
   } catch (err) {
     console.error("XVideos posts error:", err && err.message ? err.message : err);
@@ -176,6 +187,20 @@ var getPosts = async function (params) {
   var baseUrl = await getBase(kvStore, axios);
 
   var targetUrl = "";
+  if (filter === "/family/" || filter === "/family") {
+    var pNum = page > 1 ? page - 1 : 0;
+    var fUrl = pNum > 0 ? baseUrl + "/?k=family&sort=length&p=" + pNum : baseUrl + "/?k=family&sort=length";
+    return parseVideoGrid({
+      url: fUrl,
+      baseUrl: baseUrl,
+      axios: axios,
+      cheerio: cheerio,
+      commonHeaders: commonHeaders,
+      signal: signal,
+      kvStore: kvStore,
+    });
+  }
+
   if (filter === "/?home=1" || filter === "/") {
     if (page === 1) {
       var randomSeed = Math.floor(Math.random() * 8) + 1;

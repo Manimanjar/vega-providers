@@ -1,5 +1,6 @@
 export const catalog = [
   { title: "Homepage", filter: "/?home=1" },
+  { title: "Family", filter: "/family/" },
   { title: "Tags", filter: "/tags/" },
   { title: "4K Ultra HD", filter: "/search/4k/" },
   { title: "1080p Full HD", filter: "/search/1080p/" }
