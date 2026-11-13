@@ -5,7 +5,6 @@ const URLS_ENDPOINT =
 const DEFAULT_BASE_URL = "https://rule34video.com";
 let memoryCache = { data: null as any, expiresAt: 0 };
 
-// Global deduplication cache to ensure videos are never repeated across categories
 const seenVideoIds = new Set<string>();
 
 async function getBase(kvStore: any, axios: any): Promise<string> {
@@ -71,26 +70,189 @@ function updateLearnedDomain(res: any, baseUrl: string, kvStore: any) {
   } catch (e) {}
 }
 
+async function parseTagsCatalogue(options: {
+  url: string;
+  baseUrl: string;
+  axios: any;
+  cheerio: any;
+  commonHeaders: any;
+  signal?: AbortSignal;
+  kvStore: any;
+}): Promise<Post[]> {
+  const { url, baseUrl, axios, cheerio, commonHeaders, signal, kvStore } = options;
+  try {
+    const res = await axios.get(url, {
+      headers: {
+        ...commonHeaders,
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Referer: baseUrl,
+      },
+      signal,
+      maxRedirects: 5,
+    });
+    updateLearnedDomain(res, baseUrl, kvStore);
+
+    const html = res.data;
+    const $ = cheerio.load(html);
+    const posts: Post[] = [];
+    const seenTags = new Set<string>();
+
+    // First collect category cards with custom images if available
+    $("a[href*='/categories/'], a[href*='/tags/']").each((_, el) => {
+      const $el = $(el);
+      const rawHref = $el.attr("href") || "";
+      let tagText = $el.text().trim();
+      const img = $el.find("img").attr("src") || "";
+
+      if (!rawHref || rawHref === "/tags/" || rawHref === "/categories/") return;
+      if (rawHref.includes("terms") || rawHref.includes("privacy") || rawHref.includes("login")) return;
+
+      const slugMatch = rawHref.match(/\/(?:tags|categories)\/([^/?#]+)/i);
+      if (!slugMatch) return;
+      const slug = slugMatch[1];
+      if (seenTags.has(slug)) return;
+      seenTags.add(slug);
+
+      if (!tagText) {
+        tagText = slug.replace(/-/g, " ");
+      }
+
+      const formattedTitle = tagText.charAt(0).toUpperCase() + tagText.slice(1);
+      const fullLink = rawHref.startsWith("http")
+        ? rawHref
+        : `${baseUrl}${rawHref.startsWith("/") ? "" : "/"}${rawHref}`;
+
+      const image = img || `${baseUrl}/apple-touch-icon.png`;
+
+      posts.push({
+        title: formattedTitle,
+        link: fullLink,
+        image: image,
+        cornerTag: "TAG",
+      });
+    });
+
+    return posts;
+  } catch (err: any) {
+    console.error("Rule34Video tags parsing error:", err?.message || err);
+    return [];
+  }
+}
+
+async function parseVideoGrid(options: {
+  url: string;
+  baseUrl: string;
+  axios: any;
+  cheerio: any;
+  commonHeaders: any;
+  signal?: AbortSignal;
+  kvStore: any;
+}): Promise<Post[]> {
+  const { url, baseUrl, axios, cheerio, commonHeaders, signal, kvStore } = options;
+
+  try {
+    const res = await axios.get(url, {
+      headers: {
+        ...commonHeaders,
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Referer: baseUrl,
+      },
+      signal,
+      maxRedirects: 5,
+    });
+
+    updateLearnedDomain(res, baseUrl, kvStore);
+
+    const html = res.data;
+    const $ = cheerio.load(html);
+    const posts: Post[] = [];
+
+    if (seenVideoIds.size > 3000) {
+      seenVideoIds.clear();
+    }
+
+    $(".item.thumb, [data-video-card-id]").each((_, element) => {
+      const $el = $(element);
+      const linkEl = $el.find("a.th, a[href*='/video/']").first();
+      const rawHref = linkEl.attr("href") || "";
+      const rawTitle =
+        linkEl.attr("title") ||
+        $el.find("img.thumb").attr("alt") ||
+        linkEl.text().trim();
+
+      if (!rawTitle || !rawHref) return;
+
+      const idMatch = rawHref.match(/\/video\/([0-9]+)/i);
+      const videoId = idMatch ? idMatch[1] : rawHref;
+
+      if (seenVideoIds.has(videoId)) {
+        return;
+      }
+      seenVideoIds.add(videoId);
+
+      const img = $el.find("img.thumb, img").first();
+      const image =
+        img.attr("data-rd-jpg") ||
+        img.attr("data-src") ||
+        img.attr("src") ||
+        "";
+
+      const duration = $el.find(".time").first().text().trim();
+      const isHd = $el.find(".quality").length > 0;
+      const cornerTag = isHd ? "HD" : undefined;
+
+      const absoluteLink = rawHref.startsWith("http")
+        ? rawHref
+        : `${baseUrl}${rawHref.startsWith("/") ? "" : "/"}${rawHref}`;
+
+      posts.push({
+        title: rawTitle,
+        link: absoluteLink,
+        image,
+        tag: duration || undefined,
+        cornerTag,
+      });
+    });
+
+    return posts;
+  } catch (err: any) {
+    console.error("Rule34Video posts error:", err?.message || err);
+    return [];
+  }
+}
+
 export const getPosts = async function ({
   filter,
   page,
-  providerValue,
   signal,
   providerContext,
 }: {
   filter: string;
   page: number;
-  providerValue: string;
-  signal: AbortSignal;
+  signal?: AbortSignal;
   providerContext: ProviderContext;
 }): Promise<Post[]> {
   const { axios, cheerio, commonHeaders, kvStore } = providerContext;
   const baseUrl = await getBase(kvStore, axios);
-
   let targetUrl = "";
 
+  // 1. Tags Catalogue: show all tags given on website
+  if (filter === "/tags/" || filter === "/tags") {
+    return parseTagsCatalogue({
+      url: `${baseUrl}/tags/`,
+      baseUrl,
+      axios,
+      cheerio,
+      commonHeaders,
+      signal,
+      kvStore,
+    });
+  }
+
+  // 2. Homepage: rotating seed on refresh for fresh videos
   if (filter === "/?home=1" || filter === "/") {
-    // Fresh homepage videos on every refresh (rotate seed / page index)
     if (page === 1) {
       const randomSeed = Math.floor(Math.random() * 8) + 1;
       targetUrl = randomSeed > 1 ? `${baseUrl}/${randomSeed}/?_t=${Date.now()}` : `${baseUrl}/?_t=${Date.now()}`;
@@ -127,14 +289,12 @@ export const getPosts = async function ({
 export const getSearchPosts = async function ({
   searchQuery,
   page,
-  providerValue,
   signal,
   providerContext,
 }: {
   searchQuery: string;
   page: number;
-  providerValue: string;
-  signal: AbortSignal;
+  signal?: AbortSignal;
   providerContext: ProviderContext;
 }): Promise<Post[]> {
   const { axios, cheerio, commonHeaders, kvStore } = providerContext;
@@ -152,90 +312,3 @@ export const getSearchPosts = async function ({
     kvStore,
   });
 };
-
-async function parseVideoGrid({
-  url,
-  baseUrl,
-  axios,
-  cheerio,
-  commonHeaders,
-  signal,
-  kvStore,
-}: {
-  url: string;
-  baseUrl: string;
-  axios: any;
-  cheerio: any;
-  commonHeaders: any;
-  signal: AbortSignal;
-  kvStore: any;
-}): Promise<Post[]> {
-  try {
-    const res = await axios.get(url, {
-      headers: {
-        ...commonHeaders,
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Referer: baseUrl,
-      },
-      signal,
-      maxRedirects: 5,
-    });
-
-    updateLearnedDomain(res, baseUrl, kvStore);
-
-    const html = res.data;
-    const $ = cheerio.load(html);
-    const posts: Post[] = [];
-
-    if (seenVideoIds.size > 3000) {
-      seenVideoIds.clear();
-    }
-
-    $(".item.thumb, [data-video-card-id]").each((_, element) => {
-      const $el = $(element);
-      const linkEl = $el.find("a.th, a[href*='/video/']").first();
-      const rawHref = linkEl.attr("href") || "";
-      const rawTitle = linkEl.attr("title") || $el.find("img.thumb").attr("alt") || linkEl.text().trim();
-
-      if (!rawTitle || !rawHref) return;
-
-      const idMatch = rawHref.match(/\/video\/([0-9]+)/i);
-      const videoId = idMatch ? idMatch[1] : rawHref;
-
-      // Deduplicate across all categories
-      if (seenVideoIds.has(videoId)) {
-        return;
-      }
-      seenVideoIds.add(videoId);
-
-      const img = $el.find("img.thumb, img").first();
-      const image =
-        img.attr("data-rd-jpg") ||
-        img.attr("data-src") ||
-        img.attr("src") ||
-        "";
-
-      const duration = $el.find(".time").first().text().trim();
-      const isHd = $el.find(".quality").length > 0;
-      const cornerTag = isHd ? "HD" : undefined;
-
-      const absoluteLink = rawHref.startsWith("http")
-        ? rawHref
-        : `${baseUrl}${rawHref.startsWith("/") ? "" : "/"}${rawHref}`;
-
-      posts.push({
-        title: rawTitle,
-        link: absoluteLink,
-        image,
-        tag: duration || undefined,
-        cornerTag,
-      });
-    });
-
-    return posts;
-  } catch (err: any) {
-    console.error("Rule34Video posts error:", err?.message || err);
-    return [];
-  }
-}

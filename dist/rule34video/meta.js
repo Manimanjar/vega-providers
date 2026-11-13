@@ -1,5 +1,5 @@
 // @vega-provider rule34video
-// @vega-version 1.0
+// @vega-version 1.1
 "use strict";
 
 var URLS_ENDPOINT =
@@ -81,6 +81,55 @@ var getMeta = async function (params) {
     var html = res.data;
     var $ = cheerio.load(html);
 
+    // If link is a tag/category page, return all videos under this tag as a playlist
+    if (url.includes("/tags/") || url.includes("/categories/")) {
+      var directLinks = [];
+      $(".item.thumb, [data-video-card-id]").each(function (_, element) {
+        var $el = $(element);
+        var linkEl = $el.find("a.th, a[href*='/video/']").first();
+        var rawHref = linkEl.attr("href") || "";
+        var rawTitle =
+          linkEl.attr("title") ||
+          $el.find("img.thumb").attr("alt") ||
+          linkEl.text().trim();
+
+        if (rawHref && rawTitle) {
+          var abs = rawHref.startsWith("http")
+            ? rawHref
+            : baseUrl + (rawHref.startsWith("/") ? "" : "/") + rawHref;
+          directLinks.push({
+            title: rawTitle,
+            link: abs,
+            type: "movie",
+          });
+        }
+      });
+
+      var tagTitle =
+        $("h1").first().text().trim() ||
+        $("title").text().replace(/- Rule34Video/i, "").trim() ||
+        "Tag Playlist";
+
+      var firstImage =
+        $(".item.thumb img").first().attr("src") ||
+        (baseUrl + "/apple-touch-icon.png");
+
+      return {
+        title: tagTitle,
+        synopsis: "Collection: " + tagTitle + " on Rule34Video (" + directLinks.length + " videos)",
+        image: firstImage,
+        poster: firstImage,
+        imdbId: "",
+        type: "series",
+        linkList: [
+          {
+            title: "Videos",
+            directLinks: directLinks.length > 0 ? directLinks : [{ title: tagTitle, link: url, type: "movie" }],
+          },
+        ],
+      };
+    }
+
     var title =
       $("h1").first().text().trim() ||
       $("meta[property='og:title']").attr("content") ||
@@ -100,8 +149,8 @@ var getMeta = async function (params) {
       }
     });
 
-    var is4k = html.indexOf("2160p") !== -1 || html.indexOf("4k") !== -1 || html.indexOf("_4k") !== -1;
-    var is1080p = html.indexOf("1080p") !== -1;
+    var is4k = html.includes("2160p") || html.includes("4k") || html.includes("_4k");
+    var is1080p = html.includes("1080p");
     var quality = is4k ? "2160p" : (is1080p ? "1080p" : "720p");
 
     return {

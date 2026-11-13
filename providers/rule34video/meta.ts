@@ -79,6 +79,55 @@ export const getMeta = async function ({
     const html = res.data;
     const $ = cheerio.load(html);
 
+    // If link is a tag/category page, return all videos under this tag as a playlist
+    if (url.includes("/tags/") || url.includes("/categories/")) {
+      const directLinks: { title: string; link: string; type: "movie" }[] = [];
+      $(".item.thumb, [data-video-card-id]").each((_, element) => {
+        const $el = $(element);
+        const linkEl = $el.find("a.th, a[href*='/video/']").first();
+        const rawHref = linkEl.attr("href") || "";
+        const rawTitle =
+          linkEl.attr("title") ||
+          $el.find("img.thumb").attr("alt") ||
+          linkEl.text().trim();
+
+        if (rawHref && rawTitle) {
+          const abs = rawHref.startsWith("http")
+            ? rawHref
+            : `${baseUrl}${rawHref.startsWith("/") ? "" : "/"}${rawHref}`;
+          directLinks.push({
+            title: rawTitle,
+            link: abs,
+            type: "movie",
+          });
+        }
+      });
+
+      const tagTitle =
+        $("h1").first().text().trim() ||
+        $("title").text().replace(/- Rule34Video/i, "").trim() ||
+        "Tag Playlist";
+
+      const firstImage =
+        $(".item.thumb img").first().attr("src") ||
+        `${baseUrl}/apple-touch-icon.png`;
+
+      return {
+        title: tagTitle,
+        synopsis: `Collection: ${tagTitle} on Rule34Video (${directLinks.length} videos)`,
+        image: firstImage,
+        poster: firstImage,
+        imdbId: "",
+        type: "series",
+        linkList: [
+          {
+            title: "Videos",
+            directLinks: directLinks.length > 0 ? directLinks : [{ title: tagTitle, link: url, type: "movie" }],
+          },
+        ],
+      };
+    }
+
     const title =
       $("h1").first().text().trim() ||
       $("meta[property='og:title']").attr("content") ||

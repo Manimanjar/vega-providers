@@ -1,5 +1,5 @@
 // @vega-provider rule34video
-// @vega-version 1.0
+// @vega-version 1.1
 
 const URLS_ENDPOINT =
   "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";

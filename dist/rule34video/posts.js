@@ -1,5 +1,5 @@
 // @vega-provider rule34video
-// @vega-version 1.0
+// @vega-version 1.1
 "use strict";
 
 var URLS_ENDPOINT =
@@ -69,6 +69,73 @@ function updateLearnedDomain(res, baseUrl, kvStore) {
       }
     }
   } catch (e) {}
+}
+
+async function parseTagsCatalogue(options) {
+  var url = options.url;
+  var baseUrl = options.baseUrl;
+  var axios = options.axios;
+  var cheerio = options.cheerio;
+  var commonHeaders = options.commonHeaders;
+  var signal = options.signal;
+  var kvStore = options.kvStore;
+
+  try {
+    var res = await axios.get(url, {
+      headers: Object.assign({}, commonHeaders, {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Referer: baseUrl,
+      }),
+      signal: signal,
+      maxRedirects: 5,
+    });
+    updateLearnedDomain(res, baseUrl, kvStore);
+
+    var html = res.data;
+    var $ = cheerio.load(html);
+    var posts = [];
+    var seenTags = new Set();
+
+    $("a[href*='/categories/'], a[href*='/tags/']").each(function (_, el) {
+      var $el = $(el);
+      var rawHref = $el.attr("href") || "";
+      var tagText = $el.text().trim();
+      var img = $el.find("img").attr("src") || "";
+
+      if (!rawHref || rawHref === "/tags/" || rawHref === "/categories/") return;
+      if (rawHref.includes("terms") || rawHref.includes("privacy") || rawHref.includes("login")) return;
+
+      var slugMatch = rawHref.match(/\/(?:tags|categories)\/([^/?#]+)/i);
+      if (!slugMatch) return;
+      var slug = slugMatch[1];
+      if (seenTags.has(slug)) return;
+      seenTags.add(slug);
+
+      if (!tagText) {
+        tagText = slug.replace(/-/g, " ");
+      }
+
+      var formattedTitle = tagText.charAt(0).toUpperCase() + tagText.slice(1);
+      var fullLink = rawHref.startsWith("http")
+        ? rawHref
+        : baseUrl + (rawHref.startsWith("/") ? "" : "/") + rawHref;
+
+      var image = img || (baseUrl + "/apple-touch-icon.png");
+
+      posts.push({
+        title: formattedTitle,
+        link: fullLink,
+        image: image,
+        cornerTag: "TAG",
+      });
+    });
+
+    return posts;
+  } catch (err) {
+    console.error("Rule34Video tags parsing error:", err && err.message ? err.message : err);
+    return [];
+  }
 }
 
 async function parseVideoGrid(options) {
@@ -165,6 +232,20 @@ var getPosts = async function (params) {
   var baseUrl = await getBase(kvStore, axios);
   var targetUrl = "";
 
+  // 1. Tags Catalogue: show all tags given on website
+  if (filter === "/tags/" || filter === "/tags") {
+    return parseTagsCatalogue({
+      url: baseUrl + "/tags/",
+      baseUrl: baseUrl,
+      axios: axios,
+      cheerio: cheerio,
+      commonHeaders: commonHeaders,
+      signal: signal,
+      kvStore: kvStore,
+    });
+  }
+
+  // 2. Homepage: rotating seed on refresh for fresh videos
   if (filter === "/?home=1" || filter === "/") {
     if (page === 1) {
       var randomSeed = Math.floor(Math.random() * 8) + 1;

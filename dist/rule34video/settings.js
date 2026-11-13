@@ -1,5 +1,5 @@
 // @vega-provider rule34video
-// @vega-version 1.0
+// @vega-version 1.1
 
 const getSettingsSchema = async function ({ providerContext }) {
   return [
