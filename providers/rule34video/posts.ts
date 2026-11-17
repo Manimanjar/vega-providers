@@ -101,7 +101,7 @@ function interleavePosts(groups) {
     if (!post || !post.link) {
       return false;
     }
-    var idMatch = post.link.match(/\\/video\\/([0-9]+)/i);
+var idMatch = post.link.match(/\/video\/([0-9]+)/);  
     var key = idMatch ? idMatch[1] : post.link;
     if (seen.has(key)) {
       return false;
