@@ -7,6 +7,20 @@ var URLS_ENDPOINT =
   "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
 var DEFAULT_BASE_URL = "https://www.xvideos.com";
 var memoryCache = { data: null, expiresAt: 0 };
+// Persistent base-URL cache key (kvStore survives sandbox re-evaluation;
+// module-level memoryCache does not, so without this every category
+// fetch paid a ~350ms urls.json round-trip before it even started).
+var BASE_CACHE_KEY = "xvideos_baseUrlCacheV1";
+
+function formatDuration(totalSeconds) {
+  var s = Math.max(0, Math.floor(totalSeconds || 0));
+  if (!s) return "";
+  var h = Math.floor(s / 3600);
+  var m = Math.floor((s % 3600) / 60);
+  var sec = s % 60;
+  var mm = h > 0 ? String(m).padStart(2, "0") : String(m);
+  return (h > 0 ? h + ":" + mm : mm) + ":" + String(sec).padStart(2, "0");
+}
 // NOTE: no module-global seen-video set. Dedup is per-page inside
 // parseVideoGrid. A global set made every refresh / category switch
 // return 0 posts once a video had been seen once (black screen).
@@ -32,15 +46,39 @@ async function getBase(kvStore, axios) {
     }
   }
 
+  // Persistent cache: Vega re-evaluates the module per invoke, so the
+  // in-memory cache above is usually empty. kvStore is local and fast.
+  if (kvStore && typeof kvStore.get === "function") {
+    try {
+      var cachedRaw = await kvStore.get(BASE_CACHE_KEY);
+      if (cachedRaw) {
+        var cached =
+          typeof cachedRaw === "string" ? JSON.parse(cachedRaw) : cachedRaw;
+        if (cached && cached.url && cached.expiresAt > Date.now()) {
+          return String(cached.url).replace(/\/+$/, "");
+        }
+      }
+    } catch (e) {}
+  }
+
   if (axios) {
     try {
-      var res = await axios.get(URLS_ENDPOINT, { timeout: 4000 });
+      var res = await axios.get(URLS_ENDPOINT, { timeout: 2500 });
       if (res.data && typeof res.data === "object") {
         memoryCache.data = res.data;
         memoryCache.expiresAt = now + 3600000;
         var entry = res.data["xvideos"];
         if (entry && entry.url) {
-          return entry.url.replace(/\/+$/, "");
+          var cleanEntry = entry.url.replace(/\/+$/, "");
+          if (kvStore && typeof kvStore.set === "function") {
+            try {
+              await kvStore.set(
+                BASE_CACHE_KEY,
+                JSON.stringify({ url: cleanEntry, expiresAt: now + 3600000 })
+              );
+            } catch (e) {}
+          }
+          return cleanEntry;
         }
       }
     } catch (e) {}
@@ -122,6 +160,7 @@ async function parseVideoGrid(options) {
 
   try {
     var res = await axios.get(url, {
+      timeout: 12000,
       headers: Object.assign({}, commonHeaders, {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -190,6 +229,15 @@ async function parseVideoGrid(options) {
         if (secMatch) durationSec += parseInt(secMatch[1], 10);
       }
       var hdTag = $el.find(".video-hd-mark").first().text().trim();
+      // Vega's card shows only ONE badge (cornerTag wins over tag), so
+      // the duration was invisible whenever a quality tag existed.
+      // Combine them: "14:00 • 1080P" keeps both in the one badge.
+      var durationText = formatDuration(durationSec) || duration || undefined;
+      var cornerTag = durationText
+        ? hdTag
+          ? durationText + " • " + hdTag
+          : durationText
+        : hdTag || undefined;
 
       var absoluteLink = rawHref.startsWith("http")
         ? rawHref
@@ -199,9 +247,9 @@ async function parseVideoGrid(options) {
         title: rawTitle,
         link: absoluteLink,
         image: image,
-        tag: duration || undefined,
+        tag: durationText,
         _dur: durationSec,
-        cornerTag: hdTag || undefined,
+        cornerTag: cornerTag,
       });
     });
 
@@ -301,7 +349,11 @@ export const getPosts = async function (params) {
       })
     );
 
-    return interleavePosts(queryResults);
+    // Cap the merged list: 7 queries return ~150-180 posts, but Vega
+    // only shows the first rows and page 2 fetches the next page anyway.
+    // Shipping all of them made the sandbox-bridge transfer and the
+    // app's list work much heavier on every scroll/category load.
+    return interleavePosts(queryResults).slice(0, 60);
   }
 
   if (filter === "/family/" || filter === "/family") {

@@ -97,6 +97,16 @@ var categories_config_default = {
 var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
 var DEFAULT_BASE_URL = "https://rule34video.com";
 var memoryCache = { data: null, expiresAt: 0 };
+var BASE_CACHE_KEY = "rule34video_baseUrlCacheV1";
+function formatDuration(totalSeconds) {
+  var s = Math.max(0, Math.floor(totalSeconds || 0));
+  if (!s) return "";
+  var h = Math.floor(s / 3600);
+  var m = Math.floor(s % 3600 / 60);
+  var sec = s % 60;
+  var mm = h > 0 ? String(m).padStart(2, "0") : String(m);
+  return (h > 0 ? h + ":" + mm : mm) + ":" + String(sec).padStart(2, "0");
+}
 async function getBase(kvStore, axios) {
   if (kvStore && typeof kvStore.get === "function") {
     try {
@@ -117,15 +127,37 @@ async function getBase(kvStore, axios) {
       return cachedEntry.url.replace(/\/+$/, "");
     }
   }
+  if (kvStore && typeof kvStore.get === "function") {
+    try {
+      var cachedRaw = await kvStore.get(BASE_CACHE_KEY);
+      if (cachedRaw) {
+        var cached = typeof cachedRaw === "string" ? JSON.parse(cachedRaw) : cachedRaw;
+        if (cached && cached.url && cached.expiresAt > Date.now()) {
+          return String(cached.url).replace(/\/+$/, "");
+        }
+      }
+    } catch (e) {
+    }
+  }
   if (axios) {
     try {
-      var res = await axios.get(URLS_ENDPOINT, { timeout: 4e3 });
+      var res = await axios.get(URLS_ENDPOINT, { timeout: 2500 });
       if (res.data && typeof res.data === "object") {
         memoryCache.data = res.data;
         memoryCache.expiresAt = now + 36e5;
         var entry = res.data["rule34video"];
         if (entry && entry.url) {
-          return entry.url.replace(/\/+$/, "");
+          var cleanEntry = entry.url.replace(/\/+$/, "");
+          if (kvStore && typeof kvStore.set === "function") {
+            try {
+              await kvStore.set(
+                BASE_CACHE_KEY,
+                JSON.stringify({ url: cleanEntry, expiresAt: now + 36e5 })
+              );
+            } catch (e) {
+            }
+          }
+          return cleanEntry;
         }
       }
     } catch (e) {
@@ -202,6 +234,7 @@ async function parseVideoGrid(options) {
   var requireVideo = options.requireVideo;
   try {
     var res = await axios.get(url, {
+      timeout: 12e3,
       headers: Object.assign({}, commonHeaders, {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         Referer: baseUrl + "/"
@@ -249,13 +282,14 @@ async function parseVideoGrid(options) {
         return;
       }
       var isHd = $el.find(".quality").length > 0;
-      var cornerTag = isHd ? "HD" : void 0;
+      var durationText = formatDuration(durationSec) || duration || void 0;
+      var cornerTag = durationText ? isHd ? durationText + " \u2022 HD" : durationText : isHd ? "HD" : void 0;
       var absoluteLink = rawHref.startsWith("http") ? rawHref : baseUrl + (rawHref.startsWith("/") ? "" : "/") + rawHref;
       posts.push({
         title: rawTitle,
         link: absoluteLink,
         image,
-        tag: duration || void 0,
+        tag: durationText,
         _dur: durationSec,
         cornerTag
       });
@@ -332,7 +366,7 @@ var getPosts = async function(params) {
         });
       })
     );
-    return interleavePosts(tagResults);
+    return interleavePosts(tagResults).slice(0, 60);
   }
   if (filter === "/family/" || filter === "/family") {
     var familyUrl = page > 1 ? baseUrl + "/search/family/" + page + "/" : baseUrl + "/search/family/";
