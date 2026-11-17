@@ -157,7 +157,7 @@ function interleavePosts(groups) {
     if (!post || !post.link) {
       return false;
     }
-    var idMatch = post.link.match(/\/video\/([0-9]+)/);
+    var idMatch = post.link.match(/\/video\/([0-9]+)/i);
     var key = idMatch ? idMatch[1] : post.link;
     if (seen.has(key)) {
       return false;
@@ -295,7 +295,7 @@ var getPosts = async function(params) {
     }
     var tagResults = await Promise.all(
       tags.map(function(tag) {
-        var cleanTag2 = encodeURIComponent(String(tag).trim().replace(/\\s+/g, "-"));
+        var cleanTag2 = encodeURIComponent(String(tag).trim().replace(/\s+/g, "-"));
         var searchUrl = page > 1 ? baseUrl + "/search/" + cleanTag2 + "/" + page + "/" : baseUrl + "/search/" + cleanTag2 + "/";
         return parseVideoGrid({
           url: searchUrl,
@@ -365,7 +365,7 @@ var getSearchPosts = async function(params) {
   var commonHeaders = providerContext.commonHeaders;
   var kvStore = providerContext.kvStore;
   var baseUrl = await getBase(kvStore, axios);
-  var cleanQuery = encodeURIComponent(searchQuery.trim().replace(/\\s+/g, "-"));
+  var cleanQuery = encodeURIComponent(searchQuery.trim().replace(/\s+/g, "-"));
   var targetUrl2 = page > 1 ? baseUrl + "/search/" + cleanQuery + "/" + page + "/" : baseUrl + "/search/" + cleanQuery + "/";
   return parseVideoGrid({
     url: targetUrl2,

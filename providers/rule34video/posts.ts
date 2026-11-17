@@ -101,7 +101,7 @@ function interleavePosts(groups) {
     if (!post || !post.link) {
       return false;
     }
-var idMatch = post.link.match(/\/video\/([0-9]+)/);  
+    var idMatch = post.link.match(/\/video\/([0-9]+)/i);
     var key = idMatch ? idMatch[1] : post.link;
     if (seen.has(key)) {
       return false;
@@ -278,7 +278,7 @@ export const getPosts = async function (params) {
 
     var tagResults = await Promise.all(
       tags.map(function (tag) {
-        var cleanTag = encodeURIComponent(String(tag).trim().replace(/\\s+/g, "-"));
+        var cleanTag = encodeURIComponent(String(tag).trim().replace(/\s+/g, "-"));
         var searchUrl =
           page > 1
             ? baseUrl + "/search/" + cleanTag + "/" + page + "/"
@@ -361,7 +361,7 @@ export const getSearchPosts = async function (params) {
   var kvStore = providerContext.kvStore;
 
   var baseUrl = await getBase(kvStore, axios);
-  var cleanQuery = encodeURIComponent(searchQuery.trim().replace(/\\s+/g, "-"));
+  var cleanQuery = encodeURIComponent(searchQuery.trim().replace(/\s+/g, "-"));
   var targetUrl =
     page > 1
       ? baseUrl + "/search/" + cleanQuery + "/" + page + "/"
