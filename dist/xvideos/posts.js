@@ -71,7 +71,6 @@ var categories_config_default = {
 var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
 var DEFAULT_BASE_URL = "https://www.xvideos.com";
 var memoryCache = { data: null, expiresAt: 0 };
-var seenVideoIds = /* @__PURE__ */ new Set();
 async function getBase(kvStore, axios) {
   if (kvStore && typeof kvStore.get === "function") {
     try {
@@ -187,9 +186,7 @@ async function parseVideoGrid(options) {
     var html = res.data;
     var $ = cheerio.load(html);
     var posts = [];
-    if (seenVideoIds.size > 3e3) {
-      seenVideoIds.clear();
-    }
+    var seenVideoIds = /* @__PURE__ */ new Set();
     $(".thumb-block").each(function(_, element) {
       var $el = $(element);
       var titleLink = $el.find("p.title a, .thumb-under p.title a, .title a").first();
@@ -275,7 +272,7 @@ var getPosts = async function(params) {
   }
   if (category && category.mode === "random_feed") {
     var randomPage = Math.floor(Math.random() * 35) + 1;
-    var randomUrl = baseUrl + "/?k=&p=" + randomPage + "&_t=" + Date.now();
+    var randomUrl = baseUrl + "/new/" + randomPage + "/?_t=" + Date.now();
     var posts = await parseVideoGrid({
       url: randomUrl,
       baseUrl,
@@ -295,7 +292,7 @@ var getPosts = async function(params) {
     var queryResults = await Promise.all(
       queries.map(function(query) {
         var pageIndex2 = Math.max(0, page - 1);
-        var targetUrl2 = baseUrl + "/?k=" + encodeURIComponent(query) + "&p=" + pageIndex2;
+        var targetUrl2 = baseUrl + "/?k=" + encodeURIComponent(String(query).replace(/\+/g, " ")) + "&p=" + pageIndex2;
         return parseVideoGrid({
           url: targetUrl2,
           baseUrl,
@@ -322,13 +319,14 @@ var getPosts = async function(params) {
       kvStore
     });
   }
+  var targetUrl;
   if (filter === "/?home=1" || filter === "/") {
     if (page === 1) {
       var randomSeed = Math.floor(Math.random() * 8) + 1;
-      targetUrl = baseUrl + "/?k=&p=" + randomSeed + "&_t=" + Date.now();
+      targetUrl = baseUrl + "/new/" + randomSeed + "/?_t=" + Date.now();
     } else {
       var pageIndex = Math.max(0, page - 1);
-      targetUrl = baseUrl + "/?k=&p=" + pageIndex;
+      targetUrl = baseUrl + "/new/" + (pageIndex + 1) + "/";
     }
   } else if (filter.startsWith("/c/")) {
     var cleanFilter = filter.replace(/\/+$/, "");
@@ -365,9 +363,9 @@ var getSearchPosts = async function(params) {
   var kvStore = providerContext.kvStore;
   var baseUrl = await getBase(kvStore, axios);
   var pageIndex = Math.max(0, page - 1);
-  var targetUrl2 = baseUrl + "/?k=" + encodeURIComponent(searchQuery) + "&p=" + pageIndex;
+  var targetUrl = baseUrl + "/?k=" + encodeURIComponent(searchQuery) + "&p=" + pageIndex;
   return parseVideoGrid({
-    url: targetUrl2,
+    url: targetUrl,
     baseUrl,
     axios,
     cheerio,

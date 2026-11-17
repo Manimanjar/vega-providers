@@ -7,7 +7,9 @@ var URLS_ENDPOINT =
   "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
 var DEFAULT_BASE_URL = "https://rule34video.com";
 var memoryCache = { data: null, expiresAt: 0 };
-var seenVideoIds = new Set();
+// NOTE: no module-global seen-video set. Dedup is per-page inside
+// parseVideoGrid. A global set made every refresh / category switch
+// return 0 posts once a video had been seen once (black screen).
 
 async function getBase(kvStore, axios) {
   if (kvStore && typeof kvStore.get === "function") {
@@ -137,10 +139,7 @@ async function parseVideoGrid(options) {
     var html = res.data;
     var $ = cheerio.load(html);
     var posts = [];
-
-    if (seenVideoIds.size > 3000) {
-      seenVideoIds.clear();
-    }
+    var seenVideoIds = new Set();
 
     $(".item.thumb, [data-video-card-id]").each(function (_, element) {
       var $el = $(element);
@@ -315,6 +314,11 @@ export const getPosts = async function (params) {
     });
   }
 
+  // Fallback for old / cached filters. targetUrl MUST be declared: in
+  // ESM strict mode assigning to an undeclared variable throws
+  // ReferenceError and getPosts rejects, so the provider showed a
+  // black screen.
+  var targetUrl;
   if (filter === "/?home=1" || filter === "/") {
     if (page === 1) {
       var randomSeed = Math.floor(Math.random() * 8) + 1;

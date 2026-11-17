@@ -7,7 +7,9 @@ var URLS_ENDPOINT =
   "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
 var DEFAULT_BASE_URL = "https://www.xvideos.com";
 var memoryCache = { data: null, expiresAt: 0 };
-var seenVideoIds = new Set();
+// NOTE: no module-global seen-video set. Dedup is per-page inside
+// parseVideoGrid. A global set made every refresh / category switch
+// return 0 posts once a video had been seen once (black screen).
 
 async function getBase(kvStore, axios) {
   if (kvStore && typeof kvStore.get === "function") {
@@ -136,10 +138,7 @@ async function parseVideoGrid(options) {
     var html = res.data;
     var $ = cheerio.load(html);
     var posts = [];
-
-    if (seenVideoIds.size > 3000) {
-      seenVideoIds.clear();
-    }
+    var seenVideoIds = new Set();
 
     $(".thumb-block").each(function (_, element) {
       var $el = $(element);
@@ -254,8 +253,12 @@ export const getPosts = async function (params) {
   }
 
   if (category && category.mode === "random_feed") {
+    // FIX (black screen): XVideos returns HTTP 500 for an empty search
+    // "/?k=&p=<n>" on every page (verified live 2026-11-17). The plain
+    // homepage "/" and "/new/<n>/" both return 200, so the random
+    // Homepage feed now uses /new/<random>/ instead.
     var randomPage = Math.floor(Math.random() * 35) + 1;
-    var randomUrl = baseUrl + "/?k=&p=" + randomPage + "&_t=" + Date.now();
+    var randomUrl = baseUrl + "/new/" + randomPage + "/?_t=" + Date.now();
     var posts = await parseVideoGrid({
       url: randomUrl,
       baseUrl: baseUrl,
@@ -277,7 +280,15 @@ export const getPosts = async function (params) {
     var queryResults = await Promise.all(
       queries.map(function (query) {
         var pageIndex = Math.max(0, page - 1);
-        var targetUrl = baseUrl + "/?k=" + encodeURIComponent(query) + "&p=" + pageIndex;
+        // Config queries use "+" as a space ("big+sister"). Encoding it
+        // raw turns it into %2B (a literal plus), so XVideos found
+        // nothing. Turn "+" into a space before encoding.
+        var targetUrl =
+          baseUrl +
+          "/?k=" +
+          encodeURIComponent(String(query).replace(/\+/g, " ")) +
+          "&p=" +
+          pageIndex;
         return parseVideoGrid({
           url: targetUrl,
           baseUrl: baseUrl,
@@ -310,13 +321,18 @@ export const getPosts = async function (params) {
     });
   }
 
+  // Fallback for old / cached filters ("/", "/?home=1", "4K", "Trending",
+  // "/c/...", "/tags/..."). targetUrl MUST be declared: in ESM strict
+  // mode assigning to an undeclared variable throws ReferenceError and
+  // getPosts rejects, so the provider showed a black screen.
+  var targetUrl;
   if (filter === "/?home=1" || filter === "/") {
     if (page === 1) {
       var randomSeed = Math.floor(Math.random() * 8) + 1;
-      targetUrl = baseUrl + "/?k=&p=" + randomSeed + "&_t=" + Date.now();
+      targetUrl = baseUrl + "/new/" + randomSeed + "/?_t=" + Date.now();
     } else {
       var pageIndex = Math.max(0, page - 1);
-      targetUrl = baseUrl + "/?k=&p=" + pageIndex;
+      targetUrl = baseUrl + "/new/" + (pageIndex + 1) + "/";
     }
   } else if (filter.startsWith("/c/")) {
     var cleanFilter = filter.replace(/\/+$/, "");
