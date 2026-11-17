@@ -1,39 +1,79 @@
-// @vega-provider xvideos
-// @vega-version 1.5
-"use strict";
+// providers/categories.config.json
+var categories_config_default = {
+  categories: [
+    {
+      title: "Homepage",
+      filter: "homepage",
+      mode: "random_feed",
+      xvideosQueries: [],
+      rule34Tags: []
+    },
+    {
+      title: "Family",
+      filter: "family",
+      mode: "keep_existing",
+      xvideosQueries: [],
+      rule34Tags: []
+    },
+    {
+      title: "Sister",
+      filter: "rel_sister",
+      mode: "multi_query",
+      xvideosQueries: ["sister", "stepsister", "stepsis", "sis", "big+sister", "little+sister", "twin+sister"],
+      rule34Tags: ["sister", "stepsister", "sis", "stepsis", "older_sister", "younger_sister", "twin_sister"]
+    },
+    {
+      title: "Brother",
+      filter: "rel_brother",
+      mode: "multi_query",
+      xvideosQueries: ["brother", "stepbrother", "stepbro", "bro", "big+brother", "younger+brother"],
+      rule34Tags: ["brother", "stepbrother", "bro", "stepbro", "older_brother", "younger_brother"]
+    },
+    {
+      title: "Mom",
+      filter: "rel_mom",
+      mode: "multi_query",
+      xvideosQueries: ["mom", "mother", "stepmom", "stepmother", "mommy", "mama"],
+      rule34Tags: ["mother", "mom", "stepmother", "stepmom", "mommy", "mother_and_son"]
+    },
+    {
+      title: "Daughter",
+      filter: "rel_daughter",
+      mode: "multi_query",
+      xvideosQueries: ["daughter", "stepdaughter", "daddy+daughter"],
+      rule34Tags: ["daughter", "stepdaughter", "father_and_daughter", "mother_and_daughter"]
+    },
+    {
+      title: "Father",
+      filter: "rel_father",
+      mode: "multi_query",
+      xvideosQueries: ["father", "dad", "stepdad", "stepfather", "daddy"],
+      rule34Tags: ["father", "dad", "stepfather", "stepdad", "daddy"]
+    },
+    {
+      title: "Aunt",
+      filter: "rel_aunt",
+      mode: "multi_query",
+      xvideosQueries: ["aunt", "auntie", "aunty", "stepaunt"],
+      rule34Tags: ["aunt", "auntie", "aunty", "stepaunt", "aunt_and_nephew"]
+    },
+    {
+      title: "Other",
+      filter: "rel_other",
+      mode: "multi_query",
+      xvideosQueries: ["cousin", "uncle", "niece", "nephew", "grandma", "granny", "mother+in+law", "sister+in+law"],
+      rule34Tags: ["cousin", "uncle", "niece", "nephew", "grandma", "granny", "mother-in-law", "sister-in-law"]
+    }
+  ]
+};
 
-var catalog = [
-  { title: "Family", filter: "/family/" },
-  { title: "Homepage", filter: "/?home=1" },
-  { title: "Amateur", filter: "/c/Amateur-65/" },
-  { title: "Asian", filter: "/c/Asian_Woman-32/" },
-  { title: "Ass", filter: "/c/Ass-14/" },
-  { title: "Big Ass", filter: "/c/Big_Ass-24/" },
-  { title: "Big Tits", filter: "/c/Big_Tits-23/" },
-  { title: "Blowjob", filter: "/c/Blowjob-15/" },
-  { title: "Creampie", filter: "/c/Creampie-40/" },
-  { title: "Indian", filter: "/c/Indian-89/" },
-  { title: "Latina", filter: "/c/Latina-16/" },
-  { title: "Lesbian", filter: "/c/Lesbian-26/" },
-  { title: "Milf", filter: "/c/Milf-17/" },
-  { title: "Interracial", filter: "/c/Interracial-27/" },
-  { title: "4K Ultra HD", filter: "/?k=4k" },
-  { title: "1080p Full HD", filter: "/?k=1080p" }
-];
-
-var genres = [
-  { title: "Arab", filter: "/c/Arab-159/" },
-  { title: "BBW", filter: "/c/bbw-51/" },
-  { title: "Blonde", filter: "/c/Blonde-20/" },
-  { title: "Brunette", filter: "/c/Brunette-25/" },
-  { title: "Cumshot", filter: "/c/Cumshot-18/" },
-  { title: "Femdom", filter: "/c/Femdom-235/" },
-  { title: "Hardcore", filter: "/c/Hardcore-13/" },
-  { title: "Lingerie", filter: "/c/Lingerie-83/" },
-  { title: "Teen", filter: "/c/Teen-37/" },
-  { title: "Trending", filter: "/best/week/" },
-  { title: "Top Rated", filter: "/best/" }
-];
-
-exports.catalog = catalog;
-exports.genres = genres;
+// providers/xvideos/catalog.ts
+var catalog = categories_config_default.categories.map((category) => ({
+  title: category.title,
+  filter: category.filter
+}));
+var genres = [];
+export {
+  catalog,
+  genres
+};
