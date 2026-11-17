@@ -19,7 +19,13 @@ async function main() {
         entryPoints: [path.join(sourceDir, file)],
         outfile: path.join(outputDir, providerDir.name, file.replace(/\.ts$/, ".js")),
         bundle: true,
-        format: "esm",
+        // FIX: Vega runs provider modules with new Function() in an
+        // artificial CommonJS environment (exports object, no ESM).
+        // format "esm" made every module fail at load with
+        // "Unexpected token 'export'" — catalog stage failed, Home
+        // went black, and the in-app provider test failed. CJS is
+        // what Vega expects (see vega-app ProviderManager docs).
+        format: "cjs",
         platform: "browser",
         target: "es2020",
       });
