@@ -71,7 +71,6 @@ var categories_config_default = {
 var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
 var DEFAULT_BASE_URL = "https://rule34video.com";
 var memoryCache = { data: null, expiresAt: 0 };
-var seenVideoIds = /* @__PURE__ */ new Set();
 async function getBase(kvStore, axios) {
   if (kvStore && typeof kvStore.get === "function") {
     try {
@@ -188,9 +187,7 @@ async function parseVideoGrid(options) {
     var html = res.data;
     var $ = cheerio.load(html);
     var posts = [];
-    if (seenVideoIds.size > 3e3) {
-      seenVideoIds.clear();
-    }
+    var seenVideoIds = /* @__PURE__ */ new Set();
     $(".item.thumb, [data-video-card-id]").each(function(_, element) {
       var $el = $(element);
       var linkEl = $el.find('a.th, a[href*="/video/"]').first();
@@ -323,6 +320,7 @@ var getPosts = async function(params) {
       kvStore
     });
   }
+  var targetUrl;
   if (filter === "/?home=1" || filter === "/") {
     if (page === 1) {
       var randomSeed = Math.floor(Math.random() * 8) + 1;
@@ -366,9 +364,9 @@ var getSearchPosts = async function(params) {
   var kvStore = providerContext.kvStore;
   var baseUrl = await getBase(kvStore, axios);
   var cleanQuery = encodeURIComponent(searchQuery.trim().replace(/\s+/g, "-"));
-  var targetUrl2 = page > 1 ? baseUrl + "/search/" + cleanQuery + "/" + page + "/" : baseUrl + "/search/" + cleanQuery + "/";
+  var targetUrl = page > 1 ? baseUrl + "/search/" + cleanQuery + "/" + page + "/" : baseUrl + "/search/" + cleanQuery + "/";
   return parseVideoGrid({
-    url: targetUrl2,
+    url: targetUrl,
     baseUrl,
     axios,
     cheerio,
