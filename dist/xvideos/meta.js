@@ -54,14 +54,33 @@ var getMeta = async function({
     const playerThumb169Match = html.match(/html5player\.setThumbUrl169\s*\(\s*['"]([^'"]+)['"]\s*\)/i);
     const image = (playerThumb169Match ? playerThumb169Match[1] : null) || (playerThumbMatch ? playerThumbMatch[1] : null) || $('meta[property="og:image"]').attr("content") || "";
     const tags = [];
-    $(".video-tags a, .tags-list a, .video-metadata a").each((_, el) => {
+    $('.video-tags-list a[href^="/tags/"]').each((_, el) => {
       const tagText = $(el).text().trim();
-      if (tagText && !tags.includes(tagText)) {
+      if (tagText && tagText !== "Edit tags" && !tags.includes(tagText)) {
         tags.push(tagText);
       }
     });
+    const cast = [];
+    $(
+      '.video-tags-list a[href^="/models/"], .video-tags-list a[href^="/amateurs/"]'
+    ).each((_, el) => {
+      const name = $(el).clone().find(".count, .user-subscribe").remove().end().text().trim().replace(/\s*\d+[kM]?$/, "");
+      if (name && !cast.includes(name)) {
+        cast.push(name);
+      }
+    });
     const duration = $(".duration, .video-duration").first().text().trim();
-    const synopsis = tags.length > 0 ? `Tags: ${tags.join(", ")}` : title;
+    const quality = html.includes("setVideoUrlHigh") || html.includes("1080p") ? "1080p" : "720p";
+    const synopsisParts = [
+      `${title}${duration ? ` \u2014 ${duration}` : ""} \u2022 ${quality}.`
+    ];
+    if (cast.length > 0) {
+      synopsisParts.push(`Starring ${cast.join(", ")}.`);
+    }
+    if (tags.length > 0) {
+      synopsisParts.push(`Tags: ${tags.join(", ")}.`);
+    }
+    const synopsis = synopsisParts.join(" ");
     return {
       title,
       synopsis,
@@ -70,12 +89,13 @@ var getMeta = async function({
       imdbId: "",
       type: "movie",
       tags: tags.length > 0 ? tags : void 0,
+      cast: cast.length > 0 ? cast : void 0,
       rating: duration || void 0,
       webUrl: url,
       linkList: [
         {
           title: "Stream Video",
-          quality: html.includes("setVideoUrlHigh") || html.includes("1080p") ? "1080p" : "720p",
+          quality,
           directLinks: [
             {
               title,

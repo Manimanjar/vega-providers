@@ -126,13 +126,38 @@ var getMeta = async function({
     const is4k = html.includes("2160p") || html.includes("4k") || html.includes("_4k");
     const is1080p = html.includes("1080p");
     const quality = is4k ? "2160p" : is1080p ? "1080p" : "720p";
+    const tags = [];
+    $('.vp-tags a[href*="/tags/"]').each((_, el) => {
+      const tagText = $(el).text().trim();
+      if (tagText && tagText !== "Tags" && !tags.includes(tagText)) {
+        tags.push(tagText);
+      }
+    });
+    let duration = "";
+    const durMatch = html.match(
+      /"duration":\s*"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?"/i
+    );
+    if (durMatch) {
+      const h = parseInt(durMatch[1] || "0", 10);
+      const m = parseInt(durMatch[2] || "0", 10);
+      const s = parseInt(durMatch[3] || "0", 10);
+      duration = h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
+    }
+    const synopsisParts = [
+      `${title}${duration ? ` \u2014 ${duration}` : ""} \u2022 ${quality}.`
+    ];
+    if (tags.length > 0) {
+      synopsisParts.push(`Tags: ${tags.join(", ")}.`);
+    }
+    const synopsis = synopsisParts.join(" ");
     return {
       title,
-      synopsis: "",
+      synopsis,
       image,
       poster: image,
       imdbId: "",
       type: "movie",
+      tags: tags.length > 0 ? tags : void 0,
       rating: quality,
       webUrl: url,
       linkList: [

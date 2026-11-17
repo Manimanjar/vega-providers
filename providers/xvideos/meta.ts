@@ -52,18 +52,56 @@ export const getMeta = async function ({
       $('meta[property="og:image"]').attr("content") ||
       "";
 
-    // Extract tags
+    // Extract tags — ONLY real /tags/ links. The old selector
+    // ".video-metadata a" also grabbed the uploader and models with
+    // their subscriber counts ("Scott Stark392k"), plus "Edit tags"
+    // and "+", so the detail screen showed junk instead of tags.
     const tags: string[] = [];
-    $(".video-tags a, .tags-list a, .video-metadata a").each((_, el) => {
+    $('.video-tags-list a[href^="/tags/"]').each((_, el) => {
       const tagText = $(el).text().trim();
-      if (tagText && !tags.includes(tagText)) {
+      if (tagText && tagText !== "Edit tags" && !tags.includes(tagText)) {
         tags.push(tagText);
       }
     });
 
-    // Extract duration or quality indicator
+    // Models / stars, without the subscriber counts stuck to the name.
+    const cast: string[] = [];
+    $(
+      '.video-tags-list a[href^="/models/"], .video-tags-list a[href^="/amateurs/"]'
+    ).each((_, el) => {
+      const name = $(el)
+        .clone()
+        .find(".count, .user-subscribe")
+        .remove()
+        .end()
+        .text()
+        .trim()
+        .replace(/\s*\d+[kM]?$/, "");
+      if (name && !cast.includes(name)) {
+        cast.push(name);
+      }
+    });
+
+    // Extract duration and quality indicator
     const duration = $(".duration, .video-duration").first().text().trim();
-    const synopsis = tags.length > 0 ? `Tags: ${tags.join(", ")}` : title;
+    const quality =
+      html.includes("setVideoUrlHigh") || html.includes("1080p")
+        ? "1080p"
+        : "720p";
+    // XVideos pages have no real description — the meta description is
+    // just "XVIDEOS <title> free". Build a useful synopsis from the
+    // title, duration, quality, stars and tags instead of leaving the
+    // detail screen on "No synopsis available".
+    const synopsisParts = [
+      `${title}${duration ? ` — ${duration}` : ""} • ${quality}.`,
+    ];
+    if (cast.length > 0) {
+      synopsisParts.push(`Starring ${cast.join(", ")}.`);
+    }
+    if (tags.length > 0) {
+      synopsisParts.push(`Tags: ${tags.join(", ")}.`);
+    }
+    const synopsis = synopsisParts.join(" ");
 
     return {
       title,
@@ -73,12 +111,13 @@ export const getMeta = async function ({
       imdbId: "",
       type: "movie",
       tags: tags.length > 0 ? tags : undefined,
+      cast: cast.length > 0 ? cast : undefined,
       rating: duration || undefined,
       webUrl: url,
       linkList: [
         {
           title: "Stream Video",
-          quality: html.includes("setVideoUrlHigh") || html.includes("1080p") ? "1080p" : "720p",
+          quality,
           directLinks: [
             {
               title: title,
