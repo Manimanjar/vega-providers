@@ -187,15 +187,19 @@ function updateLearnedDomain(res, baseUrl, kvStore) {
   } catch (e) {
   }
 }
-function fisherYatesShuffle(list) {
-  var arr = list.slice();
-  for (var i = arr.length - 1; i > 0; i--) {
-    var j = Math.floor(Math.random() * (i + 1));
-    var temp = arr[i];
-    arr[i] = arr[j];
-    arr[j] = temp;
+function compareTitle(a, b) {
+  var ax = String(a).toLowerCase().split(/(\d+)/);
+  var bx = String(b).toLowerCase().split(/(\d+)/);
+  for (var i = 0; i < Math.max(ax.length, bx.length); i++) {
+    if (ax[i] === void 0) return -1;
+    if (bx[i] === void 0) return 1;
+    if (ax[i] === bx[i]) continue;
+    var an = Number(ax[i]);
+    var bn = Number(bx[i]);
+    if (!isNaN(an) && !isNaN(bn)) return an - bn;
+    return ax[i] < bx[i] ? -1 : 1;
   }
-  return arr;
+  return 0;
 }
 function interleavePosts(groups) {
   var result = [];
@@ -294,7 +298,7 @@ async function parseVideoGrid(options) {
       });
     });
     posts.sort(function(a, b) {
-      return (b._dur || 0) - (a._dur || 0);
+      return compareTitle(a.title || "", b.title || "");
     });
     return posts;
   } catch (err) {
@@ -343,7 +347,7 @@ var getPosts = async function(params) {
       signal,
       kvStore
     });
-    return fisherYatesShuffle(posts);
+    return posts;
   }
   if (category && category.mode === "multi_query") {
     var queries = Array.isArray(category.xvideosQueries) ? category.xvideosQueries : [];
@@ -365,7 +369,11 @@ var getPosts = async function(params) {
         });
       })
     );
-    return interleavePosts(queryResults).slice(0, 60);
+    var merged = interleavePosts(queryResults);
+    merged.sort(function(a, b) {
+      return compareTitle(a.title || "", b.title || "");
+    });
+    return merged.slice(0, 60);
   }
   if (filter === "/family/" || filter === "/family") {
     var pNum = page > 1 ? page - 1 : 0;

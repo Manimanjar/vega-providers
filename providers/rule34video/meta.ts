@@ -142,13 +142,49 @@ export const getMeta = async function ({
     const is1080p = html.includes("1080p");
     const quality = is4k ? "2160p" : (is1080p ? "1080p" : "720p");
 
+    // The video's own tags live in .vp-tags (tag_vote_chip links).
+    // The old code returned no tags at all, so the detail screen
+    // showed no tags and "No synopsis available".
+    const tags: string[] = [];
+    $('.vp-tags a[href*="/tags/"]').each((_, el) => {
+      const tagText = $(el).text().trim();
+      if (tagText && tagText !== "Tags" && !tags.includes(tagText)) {
+        tags.push(tagText);
+      }
+    });
+
+    // Duration is in the page's JSON-LD as ISO 8601, e.g. PT0H58M54S.
+    // (The .time elements on the page belong to related videos.)
+    let duration = "";
+    const durMatch = html.match(
+      /"duration":\s*"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?"/i
+    );
+    if (durMatch) {
+      const h = parseInt(durMatch[1] || "0", 10);
+      const m = parseInt(durMatch[2] || "0", 10);
+      const s = parseInt(durMatch[3] || "0", 10);
+      duration =
+        h > 0
+          ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+          : `${m}:${String(s).padStart(2, "0")}`;
+    }
+
+    const synopsisParts = [
+      `${title}${duration ? ` — ${duration}` : ""} • ${quality}.`,
+    ];
+    if (tags.length > 0) {
+      synopsisParts.push(`Tags: ${tags.join(", ")}.`);
+    }
+    const synopsis = synopsisParts.join(" ");
+
     return {
       title,
-      synopsis: "",
+      synopsis,
       image,
       poster: image,
       imdbId: "",
       type: "movie",
+      tags: tags.length > 0 ? tags : undefined,
       rating: quality,
       webUrl: url,
       linkList: [

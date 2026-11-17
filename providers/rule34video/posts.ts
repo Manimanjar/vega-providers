@@ -111,15 +111,22 @@ function updateLearnedDomain(res, baseUrl, kvStore) {
   } catch (e) {}
 }
 
-function fisherYatesShuffle(list) {
-  var arr = list.slice();
-  for (var i = arr.length - 1; i > 0; i--) {
-    var j = Math.floor(Math.random() * (i + 1));
-    var temp = arr[i];
-    arr[i] = arr[j];
-    arr[j] = temp;
+// Natural, case-insensitive title comparison ("Part 2" before "Part 10").
+// Implemented by hand so it behaves the same in every JS engine Vega's
+// sandbox may use, without relying on localeCompare options.
+function compareTitle(a, b) {
+  var ax = String(a).toLowerCase().split(/(\d+)/);
+  var bx = String(b).toLowerCase().split(/(\d+)/);
+  for (var i = 0; i < Math.max(ax.length, bx.length); i++) {
+    if (ax[i] === undefined) return -1;
+    if (bx[i] === undefined) return 1;
+    if (ax[i] === bx[i]) continue;
+    var an = Number(ax[i]);
+    var bn = Number(bx[i]);
+    if (!isNaN(an) && !isNaN(bn)) return an - bn;
+    return ax[i] < bx[i] ? -1 : 1;
   }
-  return arr;
+  return 0;
 }
 
 function interleavePosts(groups) {
@@ -256,8 +263,10 @@ async function parseVideoGrid(options) {
       });
     });
 
+    // Alphabetical by title, so parts of the same clip sit together
+    // instead of roaming through the pool (was: longest first).
     posts.sort(function (a, b) {
-      return (b._dur || 0) - (a._dur || 0);
+      return compareTitle(a.title || "", b.title || "");
     });
 
     return posts;
@@ -315,7 +324,9 @@ export const getPosts = async function (params) {
       signal: signal,
       kvStore: kvStore,
     });
-    return fisherYatesShuffle(posts);
+    // The page itself is random on every refresh; within it the
+    // videos are alphabetical so parts of a clip stay together.
+    return posts;
   }
 
   if (category && category.mode === "multi_query") {
@@ -348,7 +359,13 @@ export const getPosts = async function (params) {
     // fetches the next page anyway. Shipping all of them made the
     // sandbox-bridge transfer and the app's list work heavier on
     // every scroll/category load.
-    return interleavePosts(tagResults).slice(0, 60);
+    // Sort the merged list alphabetically (interleaving alone would
+    // scatter parts of the same clip again) and then cap it.
+    var merged = interleavePosts(tagResults);
+    merged.sort(function (a, b) {
+      return compareTitle(a.title || "", b.title || "");
+    });
+    return merged.slice(0, 60);
   }
 
   if (filter === "/family/" || filter === "/family") {
