@@ -1,11 +1,12 @@
 import { Post, ProviderContext } from "../types";
+import config from "../categories.config.json";
+
 "use strict";
 
 var URLS_ENDPOINT =
   "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
 var DEFAULT_BASE_URL = "https://www.xvideos.com";
 var memoryCache = { data: null, expiresAt: 0 };
-
 var seenVideoIds = new Set();
 
 async function getBase(kvStore, axios) {
@@ -70,6 +71,44 @@ function updateLearnedDomain(res, baseUrl, kvStore) {
   } catch (e) {}
 }
 
+function fisherYatesShuffle(list) {
+  var arr = list.slice();
+  for (var i = arr.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var temp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = temp;
+  }
+  return arr;
+}
+
+function interleavePosts(groups) {
+  var result = [];
+  var maxLength = groups.reduce(function (max, group) {
+    return Math.max(max, group.length);
+  }, 0);
+
+  for (var i = 0; i < maxLength; i++) {
+    for (var g = 0; g < groups.length; g++) {
+      if (groups[g][i]) {
+        result.push(groups[g][i]);
+      }
+    }
+  }
+
+  var seen = new Set();
+  return result.filter(function (post) {
+    if (!post || !post.link) {
+      return false;
+    }
+    if (seen.has(post.link)) {
+      return false;
+    }
+    seen.add(post.link);
+    return true;
+  });
+}
+
 async function parseVideoGrid(options) {
   var url = options.url;
   var baseUrl = options.baseUrl;
@@ -113,7 +152,10 @@ async function parseVideoGrid(options) {
       }
 
       var rawHref =
-        titleLink.attr("href") || $el.find(".thumb-inside a").first().attr("href") || $el.find("a").first().attr("href") || "";
+        titleLink.attr("href") ||
+        $el.find(".thumb-inside a").first().attr("href") ||
+        $el.find("a").first().attr("href") ||
+        "";
 
       if (!rawHref) return;
 
@@ -164,12 +206,20 @@ async function parseVideoGrid(options) {
       });
     });
 
-    posts.sort(function (a, b) { return (b._dur || 0) - (a._dur || 0); });
+    posts.sort(function (a, b) {
+      return (b._dur || 0) - (a._dur || 0);
+    });
     return posts;
   } catch (err) {
     console.error("XVideos posts error:", err && err.message ? err.message : err);
     return [];
   }
+}
+
+function getCategory(filter) {
+  return config.categories.find(function (category) {
+    return category.filter === filter;
+  });
 }
 
 export const getPosts = async function (params) {
@@ -184,11 +234,71 @@ export const getPosts = async function (params) {
   var kvStore = providerContext.kvStore;
 
   var baseUrl = await getBase(kvStore, axios);
+  var category = getCategory(filter);
 
-  var targetUrl = "";
+  if (category && category.mode === "keep_existing") {
+    var pNum = page > 1 ? page - 1 : 0;
+    var fUrl =
+      pNum > 0
+        ? baseUrl + "/?k=family&sort=length&p=" + pNum
+        : baseUrl + "/?k=family&sort=length";
+    return parseVideoGrid({
+      url: fUrl,
+      baseUrl: baseUrl,
+      axios: axios,
+      cheerio: cheerio,
+      commonHeaders: commonHeaders,
+      signal: signal,
+      kvStore: kvStore,
+    });
+  }
+
+  if (category && category.mode === "random_feed") {
+    var randomPage = Math.floor(Math.random() * 35) + 1;
+    var randomUrl = baseUrl + "/?k=&p=" + randomPage + "&_t=" + Date.now();
+    var posts = await parseVideoGrid({
+      url: randomUrl,
+      baseUrl: baseUrl,
+      axios: axios,
+      cheerio: cheerio,
+      commonHeaders: commonHeaders,
+      signal: signal,
+      kvStore: kvStore,
+    });
+    return fisherYatesShuffle(posts);
+  }
+
+  if (category && category.mode === "multi_query") {
+    var queries = Array.isArray(category.xvideosQueries) ? category.xvideosQueries : [];
+    if (queries.length === 0) {
+      return [];
+    }
+
+    var queryResults = await Promise.all(
+      queries.map(function (query) {
+        var pageIndex = Math.max(0, page - 1);
+        var targetUrl = baseUrl + "/?k=" + encodeURIComponent(query) + "&p=" + pageIndex;
+        return parseVideoGrid({
+          url: targetUrl,
+          baseUrl: baseUrl,
+          axios: axios,
+          cheerio: cheerio,
+          commonHeaders: commonHeaders,
+          signal: signal,
+          kvStore: kvStore,
+        });
+      })
+    );
+
+    return interleavePosts(queryResults);
+  }
+
   if (filter === "/family/" || filter === "/family") {
     var pNum = page > 1 ? page - 1 : 0;
-    var fUrl = pNum > 0 ? baseUrl + "/?k=family&sort=length&p=" + pNum : baseUrl + "/?k=family&sort=length";
+    var fUrl =
+      pNum > 0
+        ? baseUrl + "/?k=family&sort=length&p=" + pNum
+        : baseUrl + "/?k=family&sort=length";
     return parseVideoGrid({
       url: fUrl,
       baseUrl: baseUrl,
