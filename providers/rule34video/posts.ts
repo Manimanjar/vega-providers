@@ -153,11 +153,11 @@ async function parseVideoGrid(options) {
 
       if (!rawTitle || !rawHref) return;
 
-      if (requireVideo && !/\\/video\\/|animated|\\.mp4(?:$|[?#])/i.test(rawHref + " " + rawTitle)) {
+      if (requireVideo && !/\/video\/|animated|\\.mp4(?:$|[?#])/i.test(rawHref + " " + rawTitle)) {
         return;
       }
 
-      var idMatch = rawHref.match(/\\/video\\/([0-9]+)/i);
+      var idMatch = rawHref.match(/\/video\/([0-9]+)/i);
       var videoId = idMatch ? idMatch[1] : rawHref;
 
       if (seenVideoIds.has(videoId)) {
