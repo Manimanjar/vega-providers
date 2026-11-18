@@ -1,74 +1,341 @@
 {
   "categories": [
     {
-      "title": "Homepage",
       "filter": "homepage",
       "mode": "random_feed",
-      "xvideosQueries": [],
-      "rule34Tags": []
+      "rule34Tags": [],
+      "title": "Homepage",
+      "xvideosQueries": []
     },
     {
-      "title": "Family",
       "filter": "family",
       "mode": "keep_existing",
-      "xvideosQueries": [],
-      "rule34Tags": []
+      "rule34Tags": [],
+      "title": "Family",
+      "xvideosQueries": []
     },
     {
-      "title": "Incest",
       "filter": "incest",
       "mode": "multi_query",
-      "xvideosQueries": ["taboo", "stepfamily", "taboo+family"],
-      "rule34Tags": ["incest", "family"]
+      "rule34Tags": [
+        "incest",
+        "family",
+        "taboo"
+      ],
+      "title": "Incest",
+      "xvideosQueries": [
+        "taboo",
+        "stepfamily",
+        "taboo+family"
+      ]
     },
     {
-      "title": "Sister",
       "filter": "rel_sister",
       "mode": "multi_query",
-      "xvideosQueries": ["sister", "stepsister", "cousin", "stepsis", "sis", "big+sister", "little+sister", "twin+sister", "cousin+sis", "cousin+sister", "cousin+stepsis", "cousin+step+sister"],
-      "rule34Tags": ["sister", "stepsister", "cousin", "sis", "stepsis", "older_sister", "younger_sister", "twin_sister", "cousin_sister", "cousin_sis"]
+      "rule34Tags": [
+        "sister",
+        "stepsister",
+        "cousin",
+        "sis",
+        "stepsis",
+        "older_sister",
+        "younger_sister",
+        "twin_sister",
+        "cousin_sister",
+        "cousin_sis",
+        "step_sister",
+        "sisters",
+        "stepsisters",
+        "cousins",
+        "sister-in-law",
+        "step_sister_in_law"
+      ],
+      "title": "Sister",
+      "xvideosQueries": [
+        "sister",
+        "stepsister",
+        "cousin",
+        "stepsis",
+        "sis",
+        "big+sister",
+        "little+sister",
+        "twin+sister",
+        "cousin+sis",
+        "cousin+sister",
+        "cousin+stepsis",
+        "cousin+step+sister",
+        "step+sister",
+        "sisters",
+        "stepsisters",
+        "cousins",
+        "sister+in+law",
+        "step+sister+in+law"
+      ]
     },
     {
-      "title": "Brother",
       "filter": "rel_brother",
       "mode": "multi_query",
-      "xvideosQueries": ["brother", "stepbrother", "cousin+brother", "stepbro", "bro", "big+brother", "younger+brother", "cousin+bro", "cousin+stepbrother"],
-      "rule34Tags": ["brother", "stepbrother", "cousin_brother", "bro", "stepbro", "older_brother", "younger_brother", "cousin_bro"]
+      "rule34Tags": [
+        "brother",
+        "stepbrother",
+        "cousin_brother",
+        "bro",
+        "stepbro",
+        "older_brother",
+        "younger_brother",
+        "cousin_bro",
+        "step_brother",
+        "brother-in-law",
+        "brothers",
+        "stepbrothers"
+      ],
+      "title": "Brother",
+      "xvideosQueries": [
+        "brother",
+        "stepbrother",
+        "cousin+brother",
+        "stepbro",
+        "bro",
+        "big+brother",
+        "younger+brother",
+        "cousin+bro",
+        "cousin+stepbrother",
+        "step+brother",
+        "brother+in+law",
+        "brothers",
+        "stepbrothers"
+      ]
     },
     {
-      "title": "Mom",
       "filter": "rel_mom",
       "mode": "multi_query",
-      "xvideosQueries": ["mom", "mother", "stepmom", "stepmother", "mommy", "mama", "cousin+mom", "cousin+mother"],
-      "rule34Tags": ["mother", "mom", "stepmother", "stepmom", "mommy", "mother_and_son", "cousin_mom", "cousin_mother"]
+      "rule34Tags": [
+        "mother",
+        "mom",
+        "stepmother",
+        "stepmom",
+        "mommy",
+        "mother_and_son",
+        "cousin_mom",
+        "cousin_mother",
+        "step_mother",
+        "step_mom",
+        "mother-in-law",
+        "moms",
+        "mothers",
+        "stepmoms",
+        "stepmothers"
+      ],
+      "title": "Mom",
+      "xvideosQueries": [
+        "mom",
+        "mother",
+        "stepmom",
+        "stepmother",
+        "mommy",
+        "mama",
+        "cousin+mom",
+        "cousin+mother",
+        "step+mother",
+        "step+mom",
+        "mother+in+law",
+        "moms",
+        "mothers",
+        "stepmoms",
+        "stepmothers"
+      ]
     },
     {
-      "title": "Daughter",
       "filter": "rel_daughter",
       "mode": "multi_query",
-      "xvideosQueries": ["daughter", "stepdaughter", "daddy+daughter", "cousin+daughter"],
-      "rule34Tags": ["daughter", "stepdaughter", "father_and_daughter", "mother_and_daughter", "cousin_daughter"]
+      "rule34Tags": [
+        "daughter",
+        "stepdaughter",
+        "father_and_daughter",
+        "mother_and_daughter",
+        "cousin_daughter",
+        "step_daughter",
+        "daughter-in-law",
+        "in_laws",
+        "in_law",
+        "daughters",
+        "stepdaughters",
+        "granddaughter",
+        "granddaughters"
+      ],
+      "title": "Daughter",
+      "xvideosQueries": [
+        "daughter",
+        "stepdaughter",
+        "daddy+daughter",
+        "cousin+daughter",
+        "step+daughter",
+        "daughter+in+law",
+        "in+laws",
+        "in+law",
+        "daughters",
+        "stepdaughters",
+        "granddaughter",
+        "granddaughters"
+      ]
     },
     {
-      "title": "Father",
       "filter": "rel_father",
       "mode": "multi_query",
-      "xvideosQueries": ["father", "dad", "stepdad", "stepfather", "daddy", "cousin+dad", "cousin+father"],
-      "rule34Tags": ["father", "dad", "stepfather", "stepdad", "daddy", "cousin_dad", "cousin_father"]
+      "rule34Tags": [
+        "father",
+        "dad",
+        "stepfather",
+        "stepdad",
+        "daddy",
+        "cousin_dad",
+        "cousin_father",
+        "step_father",
+        "father-in-law",
+        "fathers",
+        "stepfathers"
+      ],
+      "title": "Father",
+      "xvideosQueries": [
+        "father",
+        "dad",
+        "stepdad",
+        "stepfather",
+        "daddy",
+        "cousin+dad",
+        "cousin+father",
+        "step+father",
+        "father+in+law",
+        "fathers",
+        "stepfathers"
+      ]
     },
     {
-      "title": "Aunt",
       "filter": "rel_aunt",
       "mode": "multi_query",
-      "xvideosQueries": ["aunt", "auntie", "aunty", "stepaunt", "cousin+aunt", "cousin+auntie"],
-      "rule34Tags": ["aunt", "auntie", "aunty", "stepaunt", "aunt_and_nephew", "cousin_aunt", "cousin_auntie"]
+      "rule34Tags": [
+        "aunt",
+        "auntie",
+        "aunty",
+        "stepaunt",
+        "aunt_and_nephew",
+        "cousin_aunt",
+        "cousin_auntie",
+        "step_aunt",
+        "aunts"
+      ],
+      "title": "Aunt",
+      "xvideosQueries": [
+        "aunt",
+        "auntie",
+        "aunty",
+        "stepaunt",
+        "cousin+aunt",
+        "cousin+auntie",
+        "step+aunt",
+        "aunts",
+        "stepaunts"
+      ]
     },
     {
-      "title": "Other",
+      "filter": "rel_grandma",
+      "mode": "multi_query",
+      "rule34Tags": [
+        "grandma",
+        "grandmother",
+        "granny",
+        "grand_mother",
+        "grannies",
+        "grandmothers",
+        "grandmas",
+        "step_grandma"
+      ],
+      "title": "Grandma",
+      "xvideosQueries": [
+        "grandma",
+        "grandmother",
+        "granny",
+        "grand+mother",
+        "grannies",
+        "grandmama",
+        "grandmothers",
+        "grandmas",
+        "step+grandma"
+      ]
+    },
+    {
+      "filter": "rel_grandpa",
+      "mode": "multi_query",
+      "rule34Tags": [
+        "grandpa",
+        "grandfather",
+        "grand_father",
+        "grandpas",
+        "grandfathers",
+        "step_grandpa"
+      ],
+      "title": "Grandpa",
+      "xvideosQueries": [
+        "grandpa",
+        "grandfather",
+        "grand+father",
+        "grandad",
+        "grandpapa",
+        "grandpas",
+        "grandfathers",
+        "step+grandpa"
+      ]
+    },
+    {
+      "filter": "rel_son",
+      "mode": "multi_query",
+      "rule34Tags": [
+        "son",
+        "stepson",
+        "step_son",
+        "sons",
+        "stepsons",
+        "grandson",
+        "grandsons"
+      ],
+      "title": "Son",
+      "xvideosQueries": [
+        "son",
+        "stepson",
+        "step+son",
+        "sons",
+        "stepsons",
+        "grandson",
+        "grandsons"
+      ]
+    },
+    {
       "filter": "rel_other",
       "mode": "multi_query",
-      "xvideosQueries": ["uncle", "niece", "nephew", "grandma", "granny", "mother+in+law", "sister+in+law"],
-      "rule34Tags": ["uncle", "niece", "nephew", "grandma", "granny", "mother-in-law", "sister-in-law"]
+      "rule34Tags": [
+        "uncle",
+        "niece",
+        "nephew",
+        "uncles",
+        "nieces",
+        "nephews",
+        "step_uncle",
+        "step_nephew",
+        "step_niece"
+      ],
+      "title": "Other",
+      "xvideosQueries": [
+        "uncle",
+        "niece",
+        "nephew",
+        "uncles",
+        "nieces",
+        "nephews",
+        "step+uncle",
+        "step+nephew",
+        "step+niece",
+        "grandparent"
+      ]
     }
   ]
 }
