@@ -37,9 +37,17 @@ var categories_config_default = {
     {
       filter: "family",
       mode: "keep_existing",
-      rule34Tags: [],
+      rule34Tags: [
+        "family",
+        "stepfamily",
+        "step_family"
+      ],
       title: "Family",
-      xvideosQueries: []
+      xvideosQueries: [
+        "family",
+        "stepfamily",
+        "step+family"
+      ]
     },
     {
       filter: "incest",
@@ -613,9 +621,9 @@ function normalizeLink(link) {
   try {
     var u = new URL(link);
     var path = u.pathname.replace(/\/+$/, "");
-    return (u.protocol + "//" + u.host.toLowerCase() + path).toLowerCase();
+    return (u.protocol + "//" + u.host.toLowerCase() + path + u.search).toLowerCase();
   } catch (e) {
-    return String(link).split(/[?#]/)[0].replace(/\/+$/, "").toLowerCase();
+    return String(link).split("#")[0].replace(/\/+$/, "").toLowerCase();
   }
 }
 function normalizeText(s) {

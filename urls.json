@@ -14,5 +14,12 @@
     "mirrors": [
       "https://rule34video.com"
     ]
+  },
+  "pornhub": {
+    "name": "PornHub",
+    "url": "https://www.pornhub.com",
+    "mirrors": [
+      "https://www.pornhub.com"
+    ]
   }
 }
