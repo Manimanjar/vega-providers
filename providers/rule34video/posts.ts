@@ -13,6 +13,7 @@ import {
   titleMatchesAnyKeyword,
   dedupePosts,
   keepLongEnough,
+  getPooledCategoryPage,
 } from "../threeD";
 import { groupSeriesPosts } from "../series";
 
@@ -811,37 +812,48 @@ const getPostsImpl = async function (params) {
       return [];
     }
 
-    var tagResults = await Promise.all(
-      tags.map(function (tag) {
-        var cleanTag = encodeURIComponent(String(tag).trim().replace(/\s+/g, "-"));
-        var searchUrl =
-          page > 1
-            ? baseUrl + "/search/" + cleanTag + "/" + page + "/"
-            : baseUrl + "/search/" + cleanTag + "/";
-        return parseVideoGrid({
-          url: searchUrl,
-          baseUrl: baseUrl,
-          axios: axios,
-          cheerio: cheerio,
-          commonHeaders: commonHeaders,
-          signal: signal,
-          kvStore: kvStore,
-          requireVideo: true,
-        });
-      })
-    );
-
-    // Cap the merged list: 7 tags return ~40-70 posts, and page 2
-    // fetches the next page anyway. Shipping all of them made the
-    // sandbox-bridge transfer and the app's list work heavier on
-    // every scroll/category load.
-    // Sort the merged list alphabetically (interleaving alone would
-    // scatter parts of the same clip again) and then cap it.
-    var merged = interleavePosts(tagResults);
-    merged.sort(function (a, b) {
-      return compareTitle(a.title || "", b.title || "");
+    // Maximum content, nothing skipped (user, 2026-11-18): the old code
+    // fetched page N of every tag, merged them, and returned only the
+    // first 60 — the rest of that term-page never appeared on any app
+    // page. getPooledCategoryPage keeps the FULL merged pool for a
+    // term-page in kvStore and serves it in 60-video slices across
+    // consecutive app pages, so every video is eventually shown.
+    // fetchTermPage(tp) builds the pool for term-page tp.
+    var fetchTermPage = async function (tp) {
+      var tagResults = await Promise.all(
+        tags.map(function (tag) {
+          var cleanTag = encodeURIComponent(String(tag).trim().replace(/\s+/g, "-"));
+          var searchUrl =
+            tp > 1
+              ? baseUrl + "/search/" + cleanTag + "/" + tp + "/"
+              : baseUrl + "/search/" + cleanTag + "/";
+          return parseVideoGrid({
+            url: searchUrl,
+            baseUrl: baseUrl,
+            axios: axios,
+            cheerio: cheerio,
+            commonHeaders: commonHeaders,
+            signal: signal,
+            kvStore: kvStore,
+            requireVideo: true,
+          });
+        })
+      );
+      // Sort the merged list alphabetically (interleaving alone would
+      // scatter parts of the same clip again). No cap here — the pool
+      // cache slices it into 60-video app pages.
+      var merged = interleavePosts(tagResults);
+      merged.sort(function (a, b) {
+        return compareTitle(a.title || "", b.title || "");
+      });
+      return merged;
+    };
+    return getPooledCategoryPage({
+      kvStore: kvStore,
+      filter: filter,
+      page: page,
+      fetchTermPage: fetchTermPage,
     });
-    return merged.slice(0, 60);
   }
 
   if (filter === "/family/" || filter === "/family") {

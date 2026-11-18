@@ -383,6 +383,113 @@ var THREE_D_PHASE1_CAP = 300;
 var THREE_D_BUCKET_CAP = 120;
 var THREE_D_WAVE_SIZE = 5;
 var THREE_D_WAVE_GAP_MS = 400;
+var CAT_POOL_META_KEY = "catPoolMetaV1";
+var CAT_POOL_KEY = "catPoolV1";
+var CAT_POOL_TTL_MS = 36e5;
+var CAT_POOL_PAGE_SIZE = 60;
+async function kvGetJson(kvStore, key) {
+  try {
+    if (!kvStore || typeof kvStore.get !== "function") return null;
+    var raw = await kvStore.get(key);
+    if (!raw) return null;
+    var parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch (e) {
+    return null;
+  }
+}
+async function kvSetJson(kvStore, key, value) {
+  try {
+    if (!kvStore || typeof kvStore.set !== "function") return false;
+    await kvStore.set(key, JSON.stringify(value));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+async function getPoolForTermPage(kvStore, filter, tp, fetchTermPage) {
+  var now = Date.now();
+  var cached = await kvGetJson(kvStore, CAT_POOL_KEY + ":" + filter + ":" + tp);
+  if (cached && cached.tp === tp && Array.isArray(cached.posts) && cached.ts && now - cached.ts < CAT_POOL_TTL_MS) {
+    return cached.posts;
+  }
+  var posts = await fetchTermPage(tp) || [];
+  var meta = await kvGetJson(kvStore, CAT_POOL_META_KEY + ":" + filter);
+  var sizes = meta && Array.isArray(meta.sizes) ? meta.sizes : [];
+  if (!meta || !meta.ts || now - meta.ts > CAT_POOL_TTL_MS) sizes = [];
+  while (sizes.length < tp) sizes.push(0);
+  sizes[tp - 1] = posts.length;
+  await kvSetJson(kvStore, CAT_POOL_META_KEY + ":" + filter, {
+    sizes,
+    ts: now
+  });
+  await kvSetJson(kvStore, CAT_POOL_KEY + ":" + filter + ":" + tp, {
+    tp,
+    posts,
+    ts: now
+  });
+  return posts;
+}
+async function getPooledCategoryPage(opts) {
+  var kvStore = opts.kvStore;
+  var filter = opts.filter;
+  var page = Math.max(1, opts.page || 1);
+  var fetchTermPage = opts.fetchTermPage;
+  var PAGE = CAT_POOL_PAGE_SIZE;
+  var globalStart = (page - 1) * PAGE;
+  var now = Date.now();
+  try {
+    var meta = await kvGetJson(kvStore, CAT_POOL_META_KEY + ":" + filter);
+    var sizes = meta && Array.isArray(meta.sizes) ? meta.sizes : [];
+    if (!meta || !meta.ts || now - meta.ts > CAT_POOL_TTL_MS) sizes = [];
+    var acc = 0;
+    var tp = 1;
+    var offset = globalStart;
+    var found = false;
+    for (var i = 0; i < sizes.length; i++) {
+      if (globalStart < acc + sizes[i]) {
+        tp = i + 1;
+        offset = globalStart - acc;
+        found = true;
+        break;
+      }
+      acc += sizes[i];
+    }
+    if (!found) {
+      tp = sizes.length + 1;
+      offset = globalStart - acc;
+    }
+    var result = [];
+    var remaining = PAGE;
+    var curTp = tp;
+    var curOffset = offset;
+    var guard = 0;
+    while (remaining > 0 && guard < 20) {
+      guard++;
+      var pool = await getPoolForTermPage(kvStore, filter, curTp, fetchTermPage);
+      if (!pool || pool.length === 0) break;
+      if (curOffset >= pool.length) {
+        curOffset -= pool.length;
+        curTp++;
+        continue;
+      }
+      var take = pool.slice(curOffset, curOffset + remaining);
+      for (var k = 0; k < take.length; k++) result.push(take[k]);
+      remaining -= take.length;
+      curOffset += take.length;
+      if (curOffset >= pool.length) {
+        curTp++;
+        curOffset = 0;
+      } else {
+        break;
+      }
+    }
+    return result;
+  } catch (e) {
+    var fallback = await fetchTermPage(Math.max(1, page)) || [];
+    return fallback.slice(0, PAGE);
+  }
+}
 var THREE_D_KEYWORDS = [
   { kw: "3d", tier: 1 },
   { kw: "cgi", tier: 1 },
@@ -1575,26 +1682,34 @@ var getPostsImpl = async function(params) {
     if (queries.length === 0) {
       return [];
     }
-    var queryResults = await Promise.all(
-      queries.map(function(query) {
-        var pageIndex2 = Math.max(0, page - 1);
-        var targetUrl2 = baseUrl + "/?k=" + encodeURIComponent(String(query).replace(/\+/g, " ")) + "&p=" + pageIndex2;
-        return parseVideoGrid({
-          url: targetUrl2,
-          baseUrl,
-          axios,
-          cheerio,
-          commonHeaders,
-          signal,
-          kvStore
-        });
-      })
-    );
-    var merged = interleavePosts(queryResults);
-    merged.sort(function(a, b) {
-      return compareTitle(a.title || "", b.title || "");
+    var fetchTermPage = async function(tp) {
+      var pageIndex2 = Math.max(0, tp - 1);
+      var termResults = await Promise.all(
+        queries.map(function(query) {
+          var targetUrl2 = baseUrl + "/?k=" + encodeURIComponent(String(query).replace(/\+/g, " ")) + "&p=" + pageIndex2;
+          return parseVideoGrid({
+            url: targetUrl2,
+            baseUrl,
+            axios,
+            cheerio,
+            commonHeaders,
+            signal,
+            kvStore
+          });
+        })
+      );
+      var merged = interleavePosts(termResults);
+      merged.sort(function(a, b) {
+        return compareTitle(a.title || "", b.title || "");
+      });
+      return merged;
+    };
+    return getPooledCategoryPage({
+      kvStore,
+      filter,
+      page,
+      fetchTermPage
     });
-    return merged.slice(0, 60);
   }
   if (filter === "/family/" || filter === "/family") {
     var pNum = page > 1 ? page - 1 : 0;

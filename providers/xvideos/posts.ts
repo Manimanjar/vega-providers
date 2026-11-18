@@ -13,6 +13,7 @@ import {
   classifyRelation,
   dedupePosts,
   keepLongEnough,
+  getPooledCategoryPage,
 } from "../threeD";
 import { groupSeriesPosts } from "../series";
 
@@ -546,41 +547,52 @@ const getPostsImpl = async function (params) {
       return [];
     }
 
-    var queryResults = await Promise.all(
-      queries.map(function (query) {
-        var pageIndex = Math.max(0, page - 1);
-        // Config queries use "+" as a space ("big+sister"). Encoding it
-        // raw turns it into %2B (a literal plus), so XVideos found
-        // nothing. Turn "+" into a space before encoding.
-        var targetUrl =
-          baseUrl +
-          "/?k=" +
-          encodeURIComponent(String(query).replace(/\+/g, " ")) +
-          "&p=" +
-          pageIndex;
-        return parseVideoGrid({
-          url: targetUrl,
-          baseUrl: baseUrl,
-          axios: axios,
-          cheerio: cheerio,
-          commonHeaders: commonHeaders,
-          signal: signal,
-          kvStore: kvStore,
-        });
-      })
-    );
-
-    // Cap the merged list: 7 queries return ~150-180 posts, but Vega
-    // only shows the first rows and page 2 fetches the next page anyway.
-    // Shipping all of them made the sandbox-bridge transfer and the
-    // app's list work much heavier on every scroll/category load.
-    // Sort the merged list alphabetically (interleaving alone would
-    // scatter parts of the same clip again) and then cap it.
-    var merged = interleavePosts(queryResults);
-    merged.sort(function (a, b) {
-      return compareTitle(a.title || "", b.title || "");
+    // Maximum content, nothing skipped (user, 2026-11-18): the old code
+    // fetched page N of every term, merged ~450 videos, and returned
+    // only the first 60 — the rest of that term-page never appeared on
+    // any app page. getPooledCategoryPage keeps the FULL merged pool
+    // for a term-page in kvStore and serves it in 60-video slices
+    // across consecutive app pages, so every video is eventually
+    // shown. fetchTermPage(tp) builds the pool for term-page tp.
+    var fetchTermPage = async function (tp) {
+      var pageIndex = Math.max(0, tp - 1);
+      var termResults = await Promise.all(
+        queries.map(function (query) {
+          // Config queries use "+" as a space ("big+sister"). Encoding it
+          // raw turns it into %2B (a literal plus), so XVideos found
+          // nothing. Turn "+" into a space before encoding.
+          var targetUrl =
+            baseUrl +
+            "/?k=" +
+            encodeURIComponent(String(query).replace(/\+/g, " ")) +
+            "&p=" +
+            pageIndex;
+          return parseVideoGrid({
+            url: targetUrl,
+            baseUrl: baseUrl,
+            axios: axios,
+            cheerio: cheerio,
+            commonHeaders: commonHeaders,
+            signal: signal,
+            kvStore: kvStore,
+          });
+        })
+      );
+      // Sort the merged list alphabetically (interleaving alone would
+      // scatter parts of the same clip again). No cap here — the pool
+      // cache slices it into 60-video app pages.
+      var merged = interleavePosts(termResults);
+      merged.sort(function (a, b) {
+        return compareTitle(a.title || "", b.title || "");
+      });
+      return merged;
+    };
+    return getPooledCategoryPage({
+      kvStore: kvStore,
+      filter: filter,
+      page: page,
+      fetchTermPage: fetchTermPage,
     });
-    return merged.slice(0, 60);
   }
 
   if (filter === "/family/" || filter === "/family") {
