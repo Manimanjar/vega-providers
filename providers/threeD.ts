@@ -225,15 +225,23 @@ export async function getPooledCategoryPage(opts) {
 // deduped), and each app page serves a different 60-video slice of it.
 // Site pages are fetched LAZILY — only as many as the requested slice
 // needs — so a search for a rare keyword stays fast, and scrolling
-// deeper keeps fetching further site pages until the cap (10 site pages,
-// ~240 videos) or the site runs out. Nothing is ever shown twice, and
-// every site page is eventually reachable. kvStore trouble falls back to
-// the old behaviour (just the requested site page) instead of breaking
-// the search.
+// deeper keeps fetching further site pages until the site runs out or
+// the pool-size cap (2000 videos, ~33 app pages) is hit. Nothing is
+// ever shown twice, and every site page is eventually reachable.
+// kvStore trouble falls back to the old behaviour (just the requested
+// site page) instead of breaking the search.
 var SEARCH_POOL_KEY = "searchPoolV1";
 var SEARCH_POOL_TTL_MS = 3600000; // 1 hour
 var SEARCH_POOL_PAGE_SIZE = 60;
-var SEARCH_MAX_SITE_PAGES = 10;
+// Pool-size cap, NOT a page cap (user, 2026-11-18): a search must fetch
+// ALL of its pages and dedupe across the full set, not just the first
+// few pages. The old SEARCH_MAX_SITE_PAGES = 10 stopped at ~240 videos,
+// so a search with many pages never showed the rest. Now the pool keeps
+// fetching further site pages as the user scrolls until the site runs
+// out — capped only by pool size, so the stored pool stays inside the
+// kvStore 1MB limit (a post is ~300 bytes JSON; 2000 posts ≈ 600KB).
+// 2000 videos is ~33 app pages of scrolling.
+var SEARCH_MAX_POOL_POSTS = 2000;
 
 // opts: { kvStore, query, page, fetchSitePage, extraPosts }
 // query is the NORMALIZED search string (lowercase, single spaces) and
@@ -281,19 +289,24 @@ export async function getPooledSearchPage(opts) {
     // Fetch more site pages until the pool covers the requested slice.
     // Site pages arrive in the site's own order and are appended, so
     // the stream order is stable across calls and pages never overlap.
-    // A site page can come back empty for a TRANSIENT reason (XVideos
-    // 429 rate-limit, Rule34Video 502) as well as because the site is
-    // genuinely out of results — so an empty page is RETRIED once
-    // (after a short pause, which usually clears a 429/502) and only
-    // then counted as empty, and only 5 empty pages in a row end the
-    // fetch. A single failed page must never strand the user on a
-    // short or empty app page while further site pages still hold
-    // content.
+    // The pool is NOT capped by site pages: it keeps fetching further
+    // site pages as the user scrolls deeper, until the site genuinely
+    // runs out (5 empty pages in a row) or the pool-size cap is hit.
+    // Every video fetched is deduped against the WHOLE pool, so a
+    // video that appears on site page 1 and again on site page 15 is
+    // shown once. A site page can come back empty for a TRANSIENT
+    // reason (XVideos 429 rate-limit, Rule34Video 502) as well as
+    // because the site is genuinely out of results — so an empty page
+    // is RETRIED once (after a short pause, which usually clears a
+    // 429/502) and only then counted as empty, and only 5 empty pages
+    // in a row end the fetch. A single failed page must never strand
+    // the user on a short or empty app page while further site pages
+    // still hold content.
     var emptyStreak = 0;
     // The fetch target is the END of the slice we are about to serve
     // (which may be nextStart+60 for a forward page, not page*60).
     var wantEnd = Math.max(page * PAGE, nextStart + PAGE);
-    while (pool.length < wantEnd && fetchedPages < SEARCH_MAX_SITE_PAGES) {
+    while (pool.length < wantEnd && pool.length < SEARCH_MAX_POOL_POSTS) {
       var sp = fetchedPages + 1;
       var pagePosts = [];
       try {
