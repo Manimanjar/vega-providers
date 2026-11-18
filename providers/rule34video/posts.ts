@@ -8,7 +8,8 @@ import {
   intersectWithPool,
   poolTitleSearch,
   poolCategorySearch,
-  primaryTermFor,
+  searchTermsFor,
+  matchesRelationWords,
   titleMatchesAnyKeyword,
   dedupePosts,
   keepLongEnough,
@@ -344,10 +345,14 @@ function build3DContext(opts) {
         requireVideo: true,
       });
     },
-    // Phase 2 of the sweep: "/search/<category>-3d/" and
-    // "/search/<category>-sfm/", pages 1-2. Rule34Video combined
-    // search is OR-ish: a result matched the category (via tags or
-    // title) OR "3d" (via title/tags) — verified live 2026-11-18.
+    // Phase 2 of the sweep: "/search/<term>-3d/" and
+    // "/search/<term>-sfm/", pages 1-2, for MULTIPLE terms per
+    // category (user, 2026-11-18): the plain word, the step- form,
+    // then the cousin form — e.g. Sister searches "sister",
+    // "stepsister" and "cousin". One term alone misses videos the
+    // others find. Rule34Video combined search is OR-ish: a result
+    // matched the category (via tags or title) OR "3d" (via
+    // title/tags) — verified live 2026-11-18.
     // A pool video appearing here proves nothing about the category,
     // so pool membership is NOT used as a signal, and the frequency
     // cap idea was abandoned (a true category video also matches
@@ -365,61 +370,113 @@ function build3DContext(opts) {
     // Homepage via the pool, never in a category it does not
     // belong to.
     fetchCategory3D: async function (filter, pool) {
-      var term = primaryTermFor(filter, "rule34video");
-      if (!term) return [];
+      var terms = searchTermsFor(filter, "rule34video", 3);
+      if (terms.length === 0) return [];
       var words = R34_CATEGORY_WORDS[filter] || [];
       if (words.length === 0) return [];
       // --- Source A: combined searches ---
-      var grids = [];
-      ["3d", "sfm"].forEach(function (kw) {
-        [1, 2].forEach(function (page) {
-          var dash = encodeURIComponent((term + "-" + kw).trim().replace(/\s+/g, "-"));
-          var targetUrl = opts.baseUrl + "/search/" + dash + "/" + (page > 1 ? page + "/" : "");
-          grids.push(
-            parseVideoGrid({
-              url: targetUrl,
-              baseUrl: opts.baseUrl,
-              axios: opts.axios,
-              cheerio: opts.cheerio,
-              commonHeaders: opts.commonHeaders,
-              signal: opts.signal,
-              kvStore: opts.kvStore,
-              requireVideo: true,
-            }).catch(function () {
-              return [];
-            })
-          );
+      var gridJobs = [];
+      terms.forEach(function (term) {
+        ["3d", "sfm"].forEach(function (kw) {
+          [1, 2].forEach(function (page) {
+            var dash = encodeURIComponent((term + "-" + kw).trim().replace(/\s+/g, "-"));
+            var targetUrl = opts.baseUrl + "/search/" + dash + "/" + (page > 1 ? page + "/" : "");
+            gridJobs.push(function () {
+              return parseVideoGrid({
+                url: targetUrl,
+                baseUrl: opts.baseUrl,
+                axios: opts.axios,
+                cheerio: opts.cheerio,
+                commonHeaders: opts.commonHeaders,
+                signal: opts.signal,
+                kvStore: opts.kvStore,
+                requireVideo: true,
+              }).catch(function () {
+                return [];
+              });
+            });
+          });
         });
       });
-      var groups = await Promise.all(grids);
+      // Up to 12 grids (3 terms x 2 keywords x 2 pages), in waves
+      // of 4 so the site is not hammered all at once. Results are
+      // INTERLEAVED round-robin across terms afterwards: if the
+      // terms were concatenated, the first term's videos would fill
+      // page 1 and the cousin term's videos would sit on page 2+
+      // (buried). Interleaving puts a cousin video on page 1 too.
+      var groups = [];
+      for (var w = 0; w < gridJobs.length; w += 4) {
+        var wave = gridJobs.slice(w, w + 4);
+        var waveResults = await Promise.all(
+          wave.map(function (job) {
+            return job();
+          })
+        );
+        for (var gi = 0; gi < waveResults.length; gi++) groups.push(waveResults[gi]);
+        if (w + 4 < gridJobs.length) {
+          await new Promise(function (resolve) {
+            setTimeout(resolve, 300);
+          });
+        }
+      }
+      // groups are in job order: 4 grids per term (2 keywords x 2
+      // pages). Flatten per term, then interleave round-robin.
+      var perTermPosts = [];
+      var gridsPerTerm = 4;
+      for (var t = 0; t < terms.length; t++) {
+        var termPosts = [];
+        for (var g = 0; g < gridsPerTerm; g++) {
+          var grp = groups[t * gridsPerTerm + g] || [];
+          for (var pi = 0; pi < grp.length; pi++) termPosts.push(grp[pi]);
+        }
+        perTermPosts.push(termPosts);
+      }
+      var allPosts = [];
+      var maxTermLen = 0;
+      for (var t2 = 0; t2 < perTermPosts.length; t2++) maxTermLen = Math.max(maxTermLen, perTermPosts[t2].length);
+      for (var i2 = 0; i2 < maxTermLen; i2++) {
+        for (var t3 = 0; t3 < perTermPosts.length; t3++) {
+          if (perTermPosts[t3][i2]) allPosts.push(perTermPosts[t3][i2]);
+        }
+      }
       var seen = {};
       var candidates = [];
-      groups.forEach(function (g) {
-        (g || []).forEach(function (p) {
-          if (!p || !p.link || seen[p.link]) return;
-          seen[p.link] = true;
-          // Widened: a candidate is a video whose title names 3D OR
-          // names this relation. "Family Rules" titles name the
-          // relation ("family") but never "3D" — the old title-3D
-          // filter dropped them before they could be checked. The
-          // page check below (video_categories / tags) is what
-          // proves 3D-ness for those.
-          if (!titleMatchesAnyKeyword(p.title) && !matchesWords(p.title, words)) return;
-          if (/compilation|collection|archive/i.test(p.title || "")) return;
-          candidates.push(p);
-        });
+      allPosts.forEach(function (p) {
+        if (!p || !p.link || seen[p.link]) return;
+        seen[p.link] = true;
+        // Widened: a candidate is a video whose title names 3D OR
+        // names this relation. "Family Rules" titles name the
+        // relation ("family") but never "3D" — the old title-3D
+        // filter dropped them before they could be checked. The
+        // page check below (video_categories / tags) is what
+        // proves 3D-ness for those.
+        if (!titleMatchesAnyKeyword(p.title) && !matchesRelationWords(p.title, words, filter)) return;
+        if (/compilation|collection|archive/i.test(p.title || "")) return;
+        candidates.push(p);
       });
       var confirmed = [];
       var toVerify = [];
       candidates.forEach(function (p) {
         // The title alone confirms only when it names BOTH dimensions.
-        if (matchesWords(p.title, words) && titleMatchesAnyKeyword(p.title)) confirmed.push(p);
+        if (matchesRelationWords(p.title, words, filter) && titleMatchesAnyKeyword(p.title)) confirmed.push(p);
         else toVerify.push(p);
       });
       // Verify the rest by page (tags + video_categories), capped so
       // the sweep stays bounded. Confirmed when the page proves 3D
-      // AND the title or the tags name this relation.
-      var checkList = toVerify.slice(0, 16);
+      // AND the title or the tags name this relation. Candidates
+      // whose title already names the relation go first — they are
+      // the ones most likely to confirm (e.g. "Family Rules" names
+      // "family" in the title; the page only has to prove 3D).
+      // Cap 24: the combined searches return many candidates and
+      // the relation-named ones must not be cut off.
+      var checkList = toVerify
+        .slice()
+        .sort(function (a, b) {
+          var aRel = matchesRelationWords(a.title, words, filter) ? 0 : 1;
+          var bRel = matchesRelationWords(b.title, words, filter) ? 0 : 1;
+          return aRel - bRel;
+        })
+        .slice(0, 24);
       for (var i = 0; i < checkList.length; i += 4) {
         var batch = checkList.slice(i, i + 4);
         var metas = await Promise.all(batch.map(function (p) {
@@ -427,7 +484,7 @@ function build3DContext(opts) {
         }));
         for (var j = 0; j < batch.length; j++) {
           var meta = metas[j] || { tags: "", is3D: false };
-          if (meta.is3D && (matchesWords(batch[j].title, words) || matchesWords(meta.tags, words))) confirmed.push(batch[j]);
+          if (meta.is3D && (matchesRelationWords(batch[j].title, words, filter) || matchesRelationWords(meta.tags, words, filter))) confirmed.push(batch[j]);
         }
         if (i + 4 < checkList.length) {
           await new Promise(function (resolve) {
@@ -441,15 +498,15 @@ function build3DContext(opts) {
       // results are mostly generic SFM clips with no relation signal.
       // The pool already IS the site's 3D content, so the surest way
       // to find a 3D sister/mom/... video is to read the pool videos'
-      // own tags. First 60 non-compilation pool videos (tier order:
+      // own tags. First 150 non-compilation pool videos (tier order:
       // the "3d"/"cgi"/"sfm" results first), batched 8 at a time;
-      // the shared tag cache means the 120 fetches happen once per
+      // the shared tag cache means the 150 fetches happen once per
       // sweep, not once per category.
       var poolSlice = (pool || [])
         .filter(function (p) {
           return p && p.link && !/compilation|collection|archive/i.test(p.title || "");
         })
-        .slice(0, 120);
+        .slice(0, 150);
       for (var b = 0; b < poolSlice.length; b += 8) {
         var poolBatch = poolSlice.slice(b, b + 8);
         var poolMetas = await Promise.all(
@@ -459,7 +516,7 @@ function build3DContext(opts) {
         );
         for (var k = 0; k < poolBatch.length; k++) {
           var pm = poolMetas[k] || { tags: "", is3D: false };
-          if (pm.tags && matchesWords(pm.tags, words)) confirmed.push(poolBatch[k]);
+          if (pm.tags && matchesRelationWords(pm.tags, words, filter)) confirmed.push(poolBatch[k]);
         }
         if (b + 8 < poolSlice.length) {
           await new Promise(function (resolve) {
@@ -484,10 +541,22 @@ function build3DContext(opts) {
     fetchRelationPool: async function (pool) {
       // Pages 1-2 of each combined search: the relation videos are
       // buried under the site's popularity ranking, and page 1 alone
-      // yields only a handful. Two pages per search, 8 fetches.
+      // yields only a handful. Two pages per search, 14 fetches.
+      // The cousin searches are here too (user, 2026-11-18): a
+      // "cousin sis" search can surface a "cousin brother" video,
+      // and the classify step below picks it up into Brother —
+      // nothing found is dropped just because it was found by
+      // another category's search. The PLAIN "cousin" searches are
+      // here as well: the combined "cousin-3d" search is OR-ish and
+      // returns mostly generic 3D videos, while the plain "cousin"
+      // search returns the actual cousin videos ("Cousin's Visit",
+      // "Cousin Power [Thordersfm]") — the page check then proves
+      // which of them are 3D.
       var queries = [
         "incest-3d", "incest-3d/2", "incest-sfm", "incest-sfm/2",
         "family-3d", "family-3d/2", "family-sfm", "family-sfm/2",
+        "cousin-3d", "cousin-3d/2", "cousin-sfm", "cousin-sfm/2",
+        "cousin", "cousin/2",
       ];
       var grids = queries.map(function (dash) {
         var targetUrl = opts.baseUrl + "/search/" + dash + "/";
@@ -513,7 +582,7 @@ function build3DContext(opts) {
       var classifyByWords = function (text) {
         var found = [];
         for (var f in R34_CATEGORY_WORDS) {
-          if (matchesWords(text, R34_CATEGORY_WORDS[f])) found.push(f);
+          if (matchesRelationWords(text, R34_CATEGORY_WORDS[f], f)) found.push(f);
         }
         return found;
       };
@@ -545,8 +614,19 @@ function build3DContext(opts) {
       });
       // Verify the rest by page (tags + video_categories), capped so
       // the sweep stays bounded. Confirmed when the page proves 3D
-      // AND the title or the tags name a relation.
-      var checkList = toVerify.slice(0, 40);
+      // AND the title or the tags name a relation. Candidates whose
+      // title already names a relation go first — they are the ones
+      // most likely to confirm (e.g. "Family Rules" names "family"
+      // in the title; the page only has to prove 3D). Cap 60 so a
+      // long candidate list does not cut the family videos off.
+      var checkList = toVerify
+        .slice()
+        .sort(function (a, b) {
+          var aRel = classifyByWords(a.title).length > 0 ? 0 : 1;
+          var bRel = classifyByWords(b.title).length > 0 ? 0 : 1;
+          return aRel - bRel;
+        })
+        .slice(0, 60);
       for (var i = 0; i < checkList.length; i += 4) {
         var batch = checkList.slice(i, i + 4);
         var metas = await Promise.all(
@@ -561,7 +641,7 @@ function build3DContext(opts) {
           var tags = meta.tags || "";
           var isCompilation = /compilation|collection|archive/i.test(post.title || "");
           if (isCompilation) {
-            if (matchesWords(tags, R34_CATEGORY_WORDS.incest)) addTo("incest", post);
+            if (matchesRelationWords(tags, R34_CATEGORY_WORDS.incest, "incest")) addTo("incest", post);
             continue;
           }
           var byTitle = classifyByWords(post.title);
@@ -595,27 +675,17 @@ function build3DContext(opts) {
 const R34_CATEGORY_WORDS = {
   family: ["family", "families", "stepfamily", "stepfamilies", "incest"],
   incest: ["incest", "family", "families", "stepfamily", "stepfamilies"],
-  rel_sister: ["sister", "sisters", "stepsister", "stepsisters", "stepsis", "sis", "step sis", "bigsis", "big sis", "lilsis", "lil sis", "little sis", "older sister", "older sisters", "younger sister", "younger sisters", "twin sister", "twin sisters"],
-  rel_brother: ["brother", "brothers", "stepbrother", "stepbrothers", "stepbro", "bro", "step bro", "bigbro", "big bro", "lilbro", "lil bro", "little bro", "older brother", "older brothers", "younger brother", "younger brothers"],
-  rel_mom: ["mom", "moms", "mother", "mothers", "stepmom", "stepmoms", "stepmother", "stepmothers", "mommy", "mommies", "mama", "mamas", "mother and son", "milf"],
-  rel_daughter: ["daughter", "daughters", "stepdaughter", "stepdaughters", "father and daughter", "mother and daughter"],
-  rel_father: ["father", "fathers", "dad", "dads", "stepdad", "stepdads", "stepfather", "stepfathers", "daddy", "daddies"],
-  rel_aunt: ["aunt", "aunts", "auntie", "aunties", "aunty", "aunties", "stepaunt", "stepaunts", "aunt and nephew"],
+  rel_sister: ["sister", "sisters", "stepsister", "stepsisters", "stepsis", "sis", "step sis", "bigsis", "big sis", "lilsis", "lil sis", "little sis", "older sister", "older sisters", "younger sister", "younger sisters", "twin sister", "twin sisters", "cousin", "cousin sis", "cousin sister", "cousin stepsis", "cousin step sister", "cousin stepsister", "cousin step sis"],
+  rel_brother: ["brother", "brothers", "stepbrother", "stepbrothers", "stepbro", "bro", "step bro", "bigbro", "big bro", "lilbro", "lil bro", "little bro", "older brother", "older brothers", "younger brother", "younger brothers", "cousin brother", "cousin bro", "cousin stepbrother", "cousin step brother", "cousin stepbro", "cousin step bro"],
+  rel_mom: ["mom", "moms", "mother", "mothers", "stepmom", "stepmoms", "stepmother", "stepmothers", "mommy", "mommies", "mama", "mamas", "mother and son", "milf", "cousin mom", "cousin mother", "cousin stepmom", "cousin stepmother"],
+  rel_daughter: ["daughter", "daughters", "stepdaughter", "stepdaughters", "father and daughter", "mother and daughter", "cousin daughter", "cousin stepdaughter"],
+  rel_father: ["father", "fathers", "dad", "dads", "stepdad", "stepdads", "stepfather", "stepfathers", "daddy", "daddies", "cousin dad", "cousin father", "cousin stepdad", "cousin stepfather", "cousin daddy"],
+  rel_aunt: ["aunt", "aunts", "auntie", "aunties", "aunty", "aunties", "stepaunt", "stepaunts", "aunt and nephew", "cousin aunt", "cousin auntie", "cousin aunty", "cousin stepaunt"],
 };
 
-// Word-boundary phrase match against a free-text string (title or the
-// space-joined tag list). Same rule as phraseIn in threeD.ts.
-function matchesWords(text, words) {
-  var hay = " " + String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim() + " ";
-  if (hay.trim().length === 0) return false;
-  for (var i = 0; i < words.length; i++) {
-    var term = words[i].toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
-    if (!term) continue;
-    var padded = " " + term + " ";
-    if (hay.indexOf(padded) !== -1) return true;
-  }
-  return false;
-}
+// (Category word matching lives in threeD.ts as
+// matchesRelationWords, shared with the engine so the cousin rule
+// is identical on both sites.)
 
 // Small getMeta-style page fetch: the video page's own tags live in
 // .vp-tags (same selector as meta.ts), and its category lives in the

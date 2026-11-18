@@ -212,17 +212,16 @@ var getStream = async function({
       rawVariants.push({ label, url: href, quality: qual, rank });
     });
     rawVariants.sort((a, b) => b.rank - a.rank);
-    await Promise.all(
-      rawVariants.map(async (item) => {
-        try {
-          const direct = await resolveDirectUrl(item.url, axios, defaultHeaders);
-          if (direct && direct.startsWith("http")) {
-            item.url = direct;
-          }
-        } catch (e) {
+    for (const item of rawVariants) {
+      try {
+        const direct = await resolveDirectUrl(item.url, axios, defaultHeaders);
+        if (direct && direct.startsWith("http") && direct !== item.url) {
+          item.url = direct;
+          break;
         }
-      })
-    );
+      } catch (e) {
+      }
+    }
     const streamHeaders = {
       Referer: baseUrl + "/",
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"

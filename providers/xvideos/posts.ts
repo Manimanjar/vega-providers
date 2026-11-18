@@ -8,7 +8,7 @@ import {
   intersectWithPool,
   poolTitleSearch,
   poolCategorySearch,
-  primaryTermFor,
+  searchTermsFor,
   titleMatchesAnyKeyword,
   classifyRelation,
   dedupePosts,
@@ -181,18 +181,40 @@ async function parseVideoGrid(options) {
   var kvStore = options.kvStore;
 
   try {
-    var res = await axios.get(url, {
-      timeout: 12000,
-      headers: Object.assign({}, commonHeaders, {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Referer: baseUrl + "/",
-        Origin: baseUrl,
-        Accept: "*/*",
-      }),
-      signal: signal,
-      maxRedirects: 5,
-    });
+    // XVideos rate-limits (HTTP 429) when searches come fast — the
+    // 3D sweep alone fires ~76 of them. One retry after a short
+    // pause recovers a throttled search instead of silently losing
+    // that whole term's videos (the bucket would quietly miss them).
+    var res = null;
+    var lastErr = null;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        res = await axios.get(url, {
+          timeout: 12000,
+          headers: Object.assign({}, commonHeaders, {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            Referer: baseUrl + "/",
+            Origin: baseUrl,
+            Accept: "*/*",
+          }),
+          signal: signal,
+          maxRedirects: 5,
+        });
+        break;
+      } catch (e) {
+        lastErr = e;
+        var status = e && e.response && e.response.status;
+        if (status === 429 && attempt === 0) {
+          await new Promise(function (resolve) {
+            setTimeout(resolve, 2500);
+          });
+          continue;
+        }
+        throw e;
+      }
+    }
+    if (!res) throw lastErr || new Error("no response");
 
     updateLearnedDomain(res, baseUrl, kvStore);
 
@@ -311,43 +333,77 @@ function build3DContext(opts) {
         kvStore: opts.kvStore,
       });
     },
-    // Phase 2 of the sweep: "<category> 3d" + "<category> sfm".
-    // XVideos keyword search is full-text AND, so these results are
-    // trustworthy directly — the site matched both the category and 3D.
-    fetchCategory3D: function (filter, pool) {
-      var term = primaryTermFor(filter, "xvideos");
-      if (!term) return Promise.resolve([]);
-      var grids = ["3d", "sfm"].map(function (kw) {
-        var targetUrl =
-          opts.baseUrl + "/?k=" + encodeURIComponent(term + " " + kw) + "&p=0";
-        return parseVideoGrid({
-          url: targetUrl,
-          baseUrl: opts.baseUrl,
-          axios: opts.axios,
-          cheerio: opts.cheerio,
-          commonHeaders: opts.commonHeaders,
-          signal: opts.signal,
-          kvStore: opts.kvStore,
-        });
-      });
-      return Promise.all(grids).then(function (groups) {
-        var out = [];
-        groups.forEach(function (g) {
-          (g || []).forEach(function (p) {
-            out.push(p);
-          });
-        });
-        return out;
-      });
+    // Phase 2 of the sweep: "<term> 3d" + "<term> sfm" for MULTIPLE
+    // terms per category (user, 2026-11-18): the plain word, the
+    // step- form, then the cousin form — e.g. Sister searches
+    // "sister", "stepsister" and "cousin". One term alone misses
+    // videos the others find. XVideos keyword search is full-text
+    // AND, so these results are trustworthy directly — the site
+    // matched both the category and 3D. The grids are fetched
+    // SEQUENTIALLY with an 800ms gap: XVideos answers 429 when
+    // searches are hammered (3 x 429 in the first multi-term run),
+    // and the sweep already runs 5 categories at once.
+    fetchCategory3D: async function (filter, pool) {
+      var terms = searchTermsFor(filter, "xvideos", 3);
+      if (terms.length === 0) return [];
+      // Per-term results, then INTERLEAVED round-robin: if the
+      // terms were concatenated, the first term's videos would fill
+      // page 1 and the cousin term's videos would sit on page 2+
+      // (buried). Interleaving puts a cousin video on page 1 too.
+      var perTerm = [];
+      for (var ti = 0; ti < terms.length; ti++) {
+        var termResults = [];
+        for (var ki = 0; ki < 2; ki++) {
+          var kw = ki === 0 ? "3d" : "sfm";
+          var targetUrl =
+            opts.baseUrl + "/?k=" + encodeURIComponent(terms[ti] + " " + kw) + "&p=0";
+          try {
+            var grid = await parseVideoGrid({
+              url: targetUrl,
+              baseUrl: opts.baseUrl,
+              axios: opts.axios,
+              cheerio: opts.cheerio,
+              commonHeaders: opts.commonHeaders,
+              signal: opts.signal,
+              kvStore: opts.kvStore,
+            });
+            (grid || []).forEach(function (p) {
+              termResults.push(p);
+            });
+          } catch (e) {
+            // One failed term never fails the category.
+          }
+          if (ti < terms.length - 1 || ki === 0) {
+            await new Promise(function (resolve) {
+              setTimeout(resolve, 800);
+            });
+          }
+        }
+        perTerm.push(termResults);
+      }
+      var out = [];
+      var maxLen = 0;
+      for (var t = 0; t < perTerm.length; t++) maxLen = Math.max(maxLen, perTerm[t].length);
+      for (var i = 0; i < maxLen; i++) {
+        for (var t2 = 0; t2 < perTerm.length; t2++) {
+          if (perTerm[t2][i]) out.push(perTerm[t2][i]);
+        }
+      }
+      return out;
     },
     // Phase 2b of the sweep: the relation pool. Most relation videos
-    // carry an incest or family tag, so search "incest 3d" /
-    // "incest sfm" / "family 3d" / "family sfm" and classify each hit
-    // by its relation words (title only — XV cards carry no tags).
-    // XVideos search is full-text AND, so a hit here is incest or
-    // family content by the site's own index; a hit with no specific
-    // relation word in the title belongs to Incest. Returns
-    // { filter: [posts] }.
+    // carry an incest or family tag, so search "taboo 3d" /
+    // "taboo sfm" / "stepfamily 3d" / "family 3d" / "cousin 3d" /
+    // "cousin sfm" and classify each hit by its relation words
+    // (title only — XV cards carry no tags). XVideos search is
+    // full-text AND, so a hit here is incest, family or cousin
+    // content by the site's own index; a hit with no specific
+    // relation word in the title belongs to Incest. The cousin
+    // searches are here too (user, 2026-11-18): a "cousin sis"
+    // search can surface a "cousin brother" video, and the classify
+    // step below picks it up into Brother — nothing found is
+    // dropped just because it was found by another category's
+    // search. Returns { filter: [posts] }.
     fetchRelationPool: async function (pool) {
       // NOTE (2026-11-18): XVideos returns HTTP 404 for ANY search
       // containing the word "incest" — including "incest 3d" and the
@@ -357,27 +413,41 @@ function build3DContext(opts) {
       // stepfamily) instead of the blocked word. The classify step
       // still matches "incest" in titles (that is matching, not
       // searching, so the block does not apply).
-      var queries = ["taboo 3d", "taboo sfm", "stepfamily 3d", "stepfamily sfm", "family 3d", "family sfm"];
-      var grids = queries.map(function (q) {
-        var targetUrl = opts.baseUrl + "/?k=" + encodeURIComponent(q) + "&p=0";
-        return parseVideoGrid({
-          url: targetUrl,
-          baseUrl: opts.baseUrl,
-          axios: opts.axios,
-          cheerio: opts.cheerio,
-          commonHeaders: opts.commonHeaders,
-          signal: opts.signal,
-          kvStore: opts.kvStore,
-        }).catch(function () {
-          return [];
-        });
-      });
-      var groups = await Promise.all(grids);
+      var queries = ["taboo 3d", "taboo sfm", "stepfamily 3d", "stepfamily sfm", "family 3d", "family sfm", "cousin 3d", "cousin sfm"];
+      // Sequential with an 800ms gap (same 429 reason as Phase 2).
+      var groups = [];
+      for (var qi = 0; qi < queries.length; qi++) {
+        var targetUrl = opts.baseUrl + "/?k=" + encodeURIComponent(queries[qi]) + "&p=0";
+        try {
+          var g = await parseVideoGrid({
+            url: targetUrl,
+            baseUrl: opts.baseUrl,
+            axios: opts.axios,
+            cheerio: opts.cheerio,
+            commonHeaders: opts.commonHeaders,
+            signal: opts.signal,
+            kvStore: opts.kvStore,
+          });
+          groups.push(g || []);
+        } catch (e) {
+          groups.push([]);
+        }
+        if (qi < queries.length - 1) {
+          await new Promise(function (resolve) {
+            setTimeout(resolve, 800);
+          });
+        }
+      }
       var out = {};
       groups.forEach(function (g) {
         (g || []).forEach(function (p) {
           if (!p || !p.link) return;
-          if (!titleMatchesAnyKeyword(p.title)) return;
+          // Widened: keep a hit whose title names 3D OR names a
+          // relation. The AND search already matched "3d" somewhere
+          // in the site's index (title/tags/description), so a
+          // title with a relation word but no 3D word is still a
+          // 3D relation video — dropping it would hide content.
+          if (!titleMatchesAnyKeyword(p.title) && classifyRelation(p.title, "").length === 0) return;
           var filters = classifyRelation(p.title, "");
           if (filters.length === 0) filters = ["incest"];
           filters.forEach(function (f) {

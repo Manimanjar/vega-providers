@@ -47,7 +47,7 @@ var THREE_D_WARM_KEY = "threeDWarmV1";
 var THREE_D_TTL_MS = 3600000; // 1 hour, same as the base-URL cache
 var THREE_D_WARM_INTERVAL_MS = 3600000; // warm at most once an hour
 var THREE_D_PAGE_SIZE = 60; // same cap as the normal multi-query merge
-var THREE_D_POOL_CAP = 400; // max videos stored in the cached pool
+var THREE_D_POOL_CAP = 600; // max videos stored in the cached pool
 var THREE_D_PHASE1_CAP = 300; // Phase 1 (generic keywords) leaves room
 // for the per-category combined-search hits appended by Phase 2.
 var THREE_D_BUCKET_CAP = 120; // max videos per category bucket (2 pages)
@@ -225,6 +225,18 @@ function buildCategoryTerms() {
       push("lil sis");
       push("little sis");
       push("step sis");
+      // Cousin (user, 2026-11-18): cousin videos belong to Sister —
+      // "cousin", "cousin sis", "cousin sister", "cousin stepsis",
+      // "cousin step sister". The bare word "cousin" is a Sister
+      // term; the cousin rule in matchesRelationWords stops a
+      // "cousin brother" video landing in Sister as well.
+      push("cousin");
+      push("cousin sis");
+      push("cousin sister");
+      push("cousin stepsis");
+      push("cousin step sister");
+      push("cousin stepsister");
+      push("cousin step sis");
     }
     if (c.filter === "rel_brother") {
       push("bigbro");
@@ -233,6 +245,35 @@ function buildCategoryTerms() {
       push("lil bro");
       push("little bro");
       push("step bro");
+      push("cousin brother");
+      push("cousin bro");
+      push("cousin stepbrother");
+      push("cousin step brother");
+      push("cousin stepbro");
+      push("cousin step bro");
+    }
+    if (c.filter === "rel_mom") {
+      push("cousin mom");
+      push("cousin mother");
+      push("cousin stepmom");
+      push("cousin stepmother");
+    }
+    if (c.filter === "rel_daughter") {
+      push("cousin daughter");
+      push("cousin stepdaughter");
+    }
+    if (c.filter === "rel_father") {
+      push("cousin dad");
+      push("cousin father");
+      push("cousin stepdad");
+      push("cousin stepfather");
+      push("cousin daddy");
+    }
+    if (c.filter === "rel_aunt") {
+      push("cousin aunt");
+      push("cousin auntie");
+      push("cousin aunty");
+      push("cousin stepaunt");
     }
     var xvPrimary =
       c.filter === "family"
@@ -274,11 +315,89 @@ export function isKnown3DFilter(filter) {
   return false;
 }
 
-function titleMatchesTerms(title, terms) {
+// Cousin rule (user, 2026-11-18): the bare word "cousin" belongs to
+// Sister, but a cousin phrase naming another relation ("cousin
+// brother", "cousin bro", "cousin dad", "cousin mom", ...) belongs to
+// THAT relation — a "cousin brother" video must not also land in
+// Sister just because it contains the word "cousin". These phrases
+// are the ones that disambiguate a bare "cousin" match.
+var COUSIN_OTHER_PHRASES = [
+  "cousin brother", "cousin bro", "cousin stepbrother",
+  "cousin step brother", "cousin stepbro", "cousin step bro",
+  "cousin dad", "cousin father", "cousin stepdad",
+  "cousin stepfather", "cousin daddy",
+  "cousin mom", "cousin mother", "cousin stepmom", "cousin stepmother",
+  "cousin daughter", "cousin stepdaughter",
+  "cousin aunt", "cousin auntie", "cousin aunty", "cousin stepaunt",
+  "cousin uncle", "cousin nephew", "cousin niece", "cousin son",
+];
+
+export function hasCousinOtherPhrase(text) {
+  var norm = normalizeText(text);
+  if (!norm) return false;
+  for (var i = 0; i < COUSIN_OTHER_PHRASES.length; i++) {
+    if (phraseIn(norm, COUSIN_OTHER_PHRASES[i])) return true;
+  }
+  return false;
+}
+
+// Word-boundary match of a free-text string against a category's word
+// list, with the cousin rule applied: when the filter is Sister and
+// the text names a cousin of another relation, the bare word "cousin"
+// does not count for Sister. Shared by the engine and by
+// Rule34Video's own word lists (posts.ts imports it), so the rule is
+// identical on both sites.
+export function matchesRelationWords(text, words, filter) {
+  var norm = normalizeText(text);
+  if (!norm) return false;
+  var skipBareCousin = filter === "rel_sister" && hasCousinOtherPhrase(norm);
+  for (var i = 0; i < words.length; i++) {
+    var term = normalizeText(words[i]);
+    if (!term) continue;
+    if (skipBareCousin && term === "cousin") continue;
+    if (phraseIn(norm, term)) return true;
+  }
+  return false;
+}
+
+// Search terms for one category on one site, for the Phase 2 combined
+// searches ("<term> 3d" / "<term> sfm"). The user wants each category
+// searched by MULTIPLE similar words, not just the first one — so
+// this returns the first `maxN` terms of the category's own list
+// (reordered in the config so the most distinct terms come first:
+// the plain word, the step- form, then the cousin form). Default 3:
+// more terms mostly re-find the same videos, and each extra term
+// costs a site search in the sweep.
+export function searchTermsFor(filter, site, maxN) {
+  var n = maxN || 3;
+  var categories = (config && config.categories) || [];
+  for (var i = 0; i < categories.length; i++) {
+    var c = categories[i];
+    if (c.filter !== filter) continue;
+    var raw = site === "xvideos" ? c.xvideosQueries || [] : c.rule34Tags || [];
+    var out = [];
+    var seen = {};
+    for (var j = 0; j < raw.length && out.length < n; j++) {
+      var t = String(raw[j] || "").replace(/\+/g, " ").trim();
+      if (!t) continue;
+      var key = t.toLowerCase();
+      if (seen[key]) continue;
+      seen[key] = true;
+      out.push(t);
+    }
+    return out;
+  }
+  return [];
+}
+
+function titleMatchesTerms(title, terms, filter) {
   var norm = normalizeText(title);
   if (!norm) return false;
+  var skipBareCousin = filter === "rel_sister" && hasCousinOtherPhrase(norm);
   for (var i = 0; i < terms.length; i++) {
-    if (phraseIn(norm, terms[i])) return true;
+    var term = terms[i];
+    if (skipBareCousin && term === "cousin") continue;
+    if (phraseIn(norm, term)) return true;
   }
   return false;
 }
@@ -288,7 +407,7 @@ function titleMatchesTerms(title, terms) {
 export function matchesCategory(title, filter) {
   for (var i = 0; i < CATEGORY_TERMS.length; i++) {
     if (CATEGORY_TERMS[i].filter !== filter) continue;
-    return titleMatchesTerms(title, CATEGORY_TERMS[i].terms);
+    return titleMatchesTerms(title, CATEGORY_TERMS[i].terms, filter);
   }
   return false;
 }
@@ -296,28 +415,25 @@ export function matchesCategory(title, filter) {
 // Which relation categories does this video belong to, from its title
 // and/or its tag text? Returns an array of filters (never Homepage).
 // The user's rule, implemented directly: a relation word (sister,
-// bigsis, stepsis, mom, milf, ...) in the name or the tags puts the
-// video in that category, and an incest/family tag marks it as
-// relation content — so a video whose tags say "incest" and whose
-// title says "sister" is a Sister video, and a video with an
-// incest/family tag but no specific relation word belongs to Incest.
-// A video matching nothing returns [] (it stays on Homepage).
+// bigsis, stepsis, mom, milf, cousin, cousin brother, ...) in the
+// name or the tags puts the video in that category, and an
+// incest/family tag marks it as relation content — so a video whose
+// tags say "incest" and whose title says "sister" is a Sister video,
+// and a video with an incest/family tag but no specific relation word
+// belongs to Incest. A video matching nothing returns [] (it stays
+// on Homepage).
 export function classifyRelation(title, tagText) {
-  var titleNorm = normalizeText(title);
-  var tagNorm = normalizeText(tagText);
   var out = [];
   for (var i = 0; i < CATEGORY_TERMS.length; i++) {
     var cat = CATEGORY_TERMS[i];
     if (cat.filter === "homepage") continue;
     if (cat.terms.length === 0) continue;
-    var hit = false;
-    for (var t = 0; t < cat.terms.length; t++) {
-      if (phraseIn(titleNorm, cat.terms[t]) || phraseIn(tagNorm, cat.terms[t])) {
-        hit = true;
-        break;
-      }
+    if (
+      matchesRelationWords(title, cat.terms, cat.filter) ||
+      matchesRelationWords(tagText, cat.terms, cat.filter)
+    ) {
+      out.push(cat.filter);
     }
-    if (hit) out.push(cat.filter);
   }
   return out;
 }
@@ -405,7 +521,7 @@ export function bucketize(pool, categoryHits) {
       if (cat.terms.length === 0) continue;
       if (buckets[cat.filter].length >= THREE_D_BUCKET_CAP) continue;
       if (buckets[cat.filter].indexOf(p2) !== -1) continue;
-      if (titleMatchesTerms(post.title, cat.terms)) {
+      if (titleMatchesTerms(post.title, cat.terms, cat.filter)) {
         buckets[cat.filter].push(p2);
       }
     }
@@ -437,7 +553,7 @@ export const write3DCache = async function (kvStore, pool, buckets) {
       pool: pool,
       buckets: buckets,
     });
-    // 1 MB kvStore cap: the pool is capped at 300 lean posts (~150 KB),
+    // 1 MB kvStore cap: the pool is capped at 600 lean posts (~300 KB),
     // so this should never trigger — but never let a cache write throw.
     if (payload.length > 900000) return false;
     await kvStore.set(THREE_D_CACHE_KEY, payload);
@@ -545,16 +661,36 @@ export const sweep3D = async function (fetchGrid, fetchCategory3D, fetchRelation
     }
     // Append the Phase 2/2b hits to the pool so the buckets (index lists)
     // can point at them. Homepage is the pool, so nothing is lost.
+    // The appends are INTERLEAVED round-robin across categories: the
+    // old code appended category by category in config order, so when
+    // the pool filled up the later categories (Brother, Mom, ...)
+    // lost their hits entirely while Family/Incest/Sister kept
+    // everything. Round-robin gives every category a fair share of
+    // the remaining slots, so no category is silently starved.
     var poolKeys = {};
     for (var p = 0; p < pool.length; p++) poolKeys[normalizeLink(pool[p].link)] = true;
+    var hitLists = [];
     for (var f3 in categoryHits) {
-      var hits = categoryHits[f3];
-      for (var h = 0; h < hits.length; h++) {
-        var key = normalizeLink(hits[h].link);
+      var dedupedHits = [];
+      var hitSeen = {};
+      (categoryHits[f3] || []).forEach(function (h) {
+        var k = normalizeLink(h.link);
+        if (!k || hitSeen[k] || poolKeys[k]) return;
+        hitSeen[k] = true;
+        dedupedHits.push(h);
+      });
+      if (dedupedHits.length > 0) hitLists.push(dedupedHits);
+    }
+    var maxHits = 0;
+    for (var hl = 0; hl < hitLists.length; hl++) maxHits = Math.max(maxHits, hitLists[hl].length);
+    for (var hi = 0; hi < maxHits && pool.length < THREE_D_POOL_CAP; hi++) {
+      for (var hj = 0; hj < hitLists.length && pool.length < THREE_D_POOL_CAP; hj++) {
+        var hit = hitLists[hj][hi];
+        if (!hit) continue;
+        var key = normalizeLink(hit.link);
         if (!key || poolKeys[key]) continue;
-        if (pool.length >= THREE_D_POOL_CAP) break;
         poolKeys[key] = true;
-        pool.push(leanPost(hits[h]));
+        pool.push(leanPost(hit));
       }
     }
   }
@@ -661,7 +797,7 @@ export function poolCategorySearch(cached, query) {
     var cat = CATEGORY_TERMS[i];
     if (cat.filter === "homepage") continue;
     if (cat.terms.length === 0) continue;
-    if (!titleMatchesTerms(query, cat.terms)) continue;
+    if (!titleMatchesTerms(query, cat.terms, cat.filter)) continue;
     var idxs = cached.buckets[cat.filter] || [];
     for (var j = 0; j < idxs.length; j++) {
       var post = cached.pool[idxs[j]];
