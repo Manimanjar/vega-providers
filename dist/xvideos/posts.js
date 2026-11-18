@@ -493,7 +493,7 @@ async function getPooledCategoryPage(opts) {
 var SEARCH_POOL_KEY = "searchPoolV1";
 var SEARCH_POOL_TTL_MS = 36e5;
 var SEARCH_POOL_PAGE_SIZE = 60;
-var SEARCH_MAX_SITE_PAGES = 10;
+var SEARCH_MAX_POOL_POSTS = 2e3;
 async function getPooledSearchPage(opts) {
   var kvStore = opts.kvStore;
   var query = opts.query || "";
@@ -518,7 +518,7 @@ async function getPooledSearchPage(opts) {
     }
     var emptyStreak = 0;
     var wantEnd = Math.max(page * PAGE, nextStart + PAGE);
-    while (pool.length < wantEnd && fetchedPages < SEARCH_MAX_SITE_PAGES) {
+    while (pool.length < wantEnd && pool.length < SEARCH_MAX_POOL_POSTS) {
       var sp = fetchedPages + 1;
       var pagePosts = [];
       try {
