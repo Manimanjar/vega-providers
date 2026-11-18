@@ -544,6 +544,7 @@ async function getPooledSearchPage(opts) {
       pool = dedupePosts(extraPosts.concat(pool));
     }
     var emptyStreak = 0;
+    var dupStreak = 0;
     var wantEnd = Math.max(page * PAGE, nextStart + PAGE);
     while (pool.length < wantEnd) {
       var sp = fetchedPages + 1;
@@ -572,7 +573,12 @@ async function getPooledSearchPage(opts) {
       emptyStreak = 0;
       var before = pool.length;
       pool = dedupePosts(pool.concat(pagePosts));
-      if (pool.length === before) break;
+      if (pool.length === before) {
+        dupStreak++;
+        if (dupStreak >= 3) break;
+      } else {
+        dupStreak = 0;
+      }
     }
     var pageStarts = cached && cached.pageStarts ? cached.pageStarts : {};
     var pageEnds = cached && cached.pageEnds ? cached.pageEnds : {};
@@ -1330,23 +1336,33 @@ var getPostsImpl = async function(params) {
     }
     var fetchTermPage = async function(tp) {
       var pageIndex2 = Math.max(0, tp - 1);
-      var termResults = await Promise.all(
-        queries.map(function(query) {
-          var targetUrl2 = baseUrl + "/?k=" + encodeURIComponent(String(query).replace(/\+/g, " ")) + "&p=" + pageIndex2;
-          return parseVideoGrid({
-            url: targetUrl2,
-            baseUrl,
-            axios,
-            cheerio,
-            commonHeaders,
-            signal,
-            kvStore
+      var termResults = [];
+      for (var b = 0; b < queries.length; b += 4) {
+        var batch = queries.slice(b, b + 4);
+        var batchRes = await Promise.all(
+          batch.map(function(query) {
+            var targetUrl2 = baseUrl + "/?k=" + encodeURIComponent(String(query).replace(/\+/g, " ")) + "&p=" + pageIndex2;
+            return parseVideoGrid({
+              url: targetUrl2,
+              baseUrl,
+              axios,
+              cheerio,
+              commonHeaders,
+              signal,
+              kvStore
+            });
+          })
+        );
+        for (var bi = 0; bi < batchRes.length; bi++) termResults.push(batchRes[bi]);
+        if (b + 4 < queries.length) {
+          await new Promise(function(r) {
+            setTimeout(r, 120);
           });
-        })
-      );
+        }
+      }
       var merged = interleavePosts(termResults);
-      merged.sort(function(a, b) {
-        return compareTitle(a.title || "", b.title || "");
+      merged.sort(function(a, b2) {
+        return compareTitle(a.title || "", b2.title || "");
       });
       return merged;
     };

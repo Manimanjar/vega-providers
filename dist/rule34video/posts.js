@@ -544,6 +544,7 @@ async function getPooledSearchPage(opts) {
       pool = dedupePosts(extraPosts.concat(pool));
     }
     var emptyStreak = 0;
+    var dupStreak = 0;
     var wantEnd = Math.max(page * PAGE, nextStart + PAGE);
     while (pool.length < wantEnd) {
       var sp = fetchedPages + 1;
@@ -572,7 +573,12 @@ async function getPooledSearchPage(opts) {
       emptyStreak = 0;
       var before = pool.length;
       pool = dedupePosts(pool.concat(pagePosts));
-      if (pool.length === before) break;
+      if (pool.length === before) {
+        dupStreak++;
+        if (dupStreak >= 3) break;
+      } else {
+        dupStreak = 0;
+      }
     }
     var pageStarts = cached && cached.pageStarts ? cached.pageStarts : {};
     var pageEnds = cached && cached.pageEnds ? cached.pageEnds : {};

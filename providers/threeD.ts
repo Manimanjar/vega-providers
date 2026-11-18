@@ -359,6 +359,7 @@ export async function getPooledSearchPage(opts) {
     // failed page must never strand the user on a short or empty app
     // page while further site pages still hold content.
     var emptyStreak = 0;
+    var dupStreak = 0;
     // The fetch target is the END of the slice we are about to serve
     // (which may be nextStart+60 for a forward page, not page*60).
     var wantEnd = Math.max(page * PAGE, nextStart + PAGE);
@@ -390,9 +391,13 @@ export async function getPooledSearchPage(opts) {
       emptyStreak = 0;
       var before = pool.length;
       pool = dedupePosts(pool.concat(pagePosts));
-      // Nothing new: the site is repeating itself (or every video on
-      // the page was already in the pool) — stop instead of looping.
-      if (pool.length === before) break;
+      // Stop only if 3 consecutive pages yield 0 new videos (or 5 empty pages in a row)
+      if (pool.length === before) {
+        dupStreak++;
+        if (dupStreak >= 3) break;
+      } else {
+        dupStreak = 0;
+      }
     }
     // Serve the slice. pageStarts/pageEnds record the exact global
     // range each app page served, so re-opening a page returns the

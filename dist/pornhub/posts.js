@@ -546,6 +546,7 @@ async function getPooledSearchPage(opts) {
       pool = dedupePosts(extraPosts.concat(pool));
     }
     var emptyStreak = 0;
+    var dupStreak = 0;
     var wantEnd = Math.max(page * PAGE, nextStart + PAGE);
     while (pool.length < wantEnd) {
       var sp = fetchedPages + 1;
@@ -574,7 +575,12 @@ async function getPooledSearchPage(opts) {
       emptyStreak = 0;
       var before = pool.length;
       pool = dedupePosts(pool.concat(pagePosts));
-      if (pool.length === before) break;
+      if (pool.length === before) {
+        dupStreak++;
+        if (dupStreak >= 3) break;
+      } else {
+        dupStreak = 0;
+      }
     }
     var pageStarts = cached && cached.pageStarts ? cached.pageStarts : {};
     var pageEnds = cached && cached.pageEnds ? cached.pageEnds : {};
@@ -1277,56 +1283,64 @@ async function searchApi(query, page, opts) {
   var commonHeaders = opts.commonHeaders;
   var signal = opts.signal;
   var apiUrl = API_BASE_URL + "/search?search=" + encodeURIComponent(query) + "&page=" + Math.max(1, page || 1) + "&thumbsize=medium";
-  try {
-    var res = await axios.get(apiUrl, {
-      timeout: 12e3,
-      headers: Object.assign({}, commonHeaders, {
-        // Force JSON: with the browser's Accept header PornHub answers
-        // an empty search with the HTML site instead of the API feed.
-        Accept: "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Referer: DEFAULT_BASE_URL + "/"
-      }),
-      signal,
-      maxRedirects: 5
-    });
-    var data = res.data;
-    if (typeof data === "string") {
-      try {
-        data = JSON.parse(data);
-      } catch (e) {
-        return [];
-      }
-    }
-    var videos = data && data.videos || [];
-    var posts = [];
-    var seen = {};
-    for (var i = 0; i < videos.length; i++) {
-      var v = videos[i] || {};
-      var link = v.url || "";
-      if (!link || seen[link]) continue;
-      seen[link] = true;
-      var title = String(v.title || "").trim();
-      if (!title) continue;
-      var image = v.default_thumb || v.thumb || "";
-      var durationSec = parseApiDuration(v.duration);
-      var durationText = formatDuration(durationSec) || v.duration || void 0;
-      posts.push({
-        title,
-        link,
-        image,
-        tag: durationText,
-        _dur: durationSec,
-        cornerTag: durationText
+  var retries = 2;
+  while (retries >= 0) {
+    try {
+      var res = await axios.get(apiUrl, {
+        timeout: 12e3,
+        headers: Object.assign({}, commonHeaders, {
+          Accept: "application/json",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Referer: DEFAULT_BASE_URL + "/"
+        }),
+        signal,
+        maxRedirects: 5
       });
+      var data = res.data;
+      if (typeof data === "string") {
+        try {
+          data = JSON.parse(data);
+        } catch (e) {
+          return [];
+        }
+      }
+      var videos = data && data.videos || [];
+      var posts = [];
+      var seen = {};
+      for (var i = 0; i < videos.length; i++) {
+        var v = videos[i] || {};
+        var link = v.url || "";
+        if (!link || seen[link]) continue;
+        seen[link] = true;
+        var title = String(v.title || "").trim();
+        if (!title) continue;
+        var image = v.default_thumb || v.thumb || "";
+        var durationSec = parseApiDuration(v.duration);
+        var durationText = formatDuration(durationSec) || v.duration || void 0;
+        posts.push({
+          title,
+          link,
+          image,
+          tag: durationText,
+          _dur: durationSec,
+          cornerTag: durationText
+        });
+      }
+      posts.sort(function(a, b) {
+        return compareTitle(a.title || "", b.title || "");
+      });
+      return posts;
+    } catch (err) {
+      retries--;
+      if (retries >= 0) {
+        await new Promise(function(r) {
+          setTimeout(r, 600);
+        });
+        continue;
+      }
+      console.error("PornHub api error:", err && err.message ? err.message : err);
+      return [];
     }
-    posts.sort(function(a, b) {
-      return compareTitle(a.title || "", b.title || "");
-    });
-    return posts;
-  } catch (err) {
-    console.error("PornHub api error:", err && err.message ? err.message : err);
-    return [];
   }
 }
 function getCategory(filter) {
@@ -1406,7 +1420,7 @@ function build3DContext(opts) {
     }
   };
 }
-async function get3DPostsForFilter(ctx, filter, page) {
+async function get3DPostsForFilter(ctx, filter, page, apiOpts) {
   var kvStore = ctx && ctx.kvStore;
   var cached = null;
   try {
@@ -1418,28 +1432,53 @@ async function get3DPostsForFilter(ctx, filter, page) {
     var bucket = getBucketPosts(cached, filter, page);
     if (bucket && bucket.length > 0) return bucket;
   }
+  var pageNum = Math.max(1, page || 1);
   var direct = [];
   try {
-    if (filter === "homepage") {
+    if (filter === "homepage" || !filter) {
       var grids = await Promise.all([
-        ctx.fetchGrid("3d").catch(function() {
+        searchApi("3d", pageNum, apiOpts).catch(function() {
           return [];
         }),
-        ctx.fetchGrid("sfm").catch(function() {
+        searchApi("sfm", pageNum, apiOpts).catch(function() {
           return [];
         })
       ]);
       direct = dedupePosts(keepLongEnough((grids[0] || []).concat(grids[1] || [])));
-    } else if (typeof ctx.fetchCategory3D === "function") {
-      direct = dedupePosts(keepLongEnough(await ctx.fetchCategory3D(filter, []) || []));
+    } else {
+      var category = getCategory(filter);
+      var queries = category && category.xvideosQueries ? category.xvideosQueries : [];
+      if (queries.length === 0) {
+        queries = [filter.replace(/^rel_/, "")];
+      }
+      var primaryTerm = String(queries[0]).replace(/\+/g, " ").trim();
+      var grids = await Promise.all([
+        searchApi(primaryTerm + " 3d", pageNum, apiOpts).catch(function() {
+          return [];
+        }),
+        searchApi(primaryTerm + " sfm", pageNum, apiOpts).catch(function() {
+          return [];
+        })
+      ]);
+      direct = dedupePosts(keepLongEnough((grids[0] || []).concat(grids[1] || [])));
+      if (direct.length === 0 && queries.length > 1) {
+        var secTerm = String(queries[1]).replace(/\+/g, " ").trim();
+        var secGrids = await Promise.all([
+          searchApi(secTerm + " 3d", pageNum, apiOpts).catch(function() {
+            return [];
+          }),
+          searchApi(secTerm + " sfm", pageNum, apiOpts).catch(function() {
+            return [];
+          })
+        ]);
+        direct = dedupePosts(keepLongEnough((secGrids[0] || []).concat(secGrids[1] || [])));
+      }
     }
   } catch (e) {
     direct = [];
   }
   warm3DInBackground(ctx);
-  var pageNum = Math.max(1, page || 1);
-  var start = (pageNum - 1) * 60;
-  return direct.slice(start, start + 60);
+  return direct;
 }
 var getPostsImpl = async function(params) {
   var filter = params.filter;
@@ -1465,7 +1504,7 @@ var getPostsImpl = async function(params) {
     kvStore
   });
   if (await is3DOn(kvStore)) {
-    return await get3DPostsForFilter(threeDContext, filter, page);
+    return await get3DPostsForFilter(threeDContext, filter, page, apiOpts);
   } else if (page <= 1) {
     warm3DInBackground(threeDContext);
   }
@@ -1483,13 +1522,29 @@ var getPostsImpl = async function(params) {
     }
     var fetchTermPage = async function(tp) {
       var pageIndex = Math.max(0, tp - 1);
-      var groups = await Promise.all(
-        queries.map(function(query) {
-          var term = String(query || "").replace(/\+/g, " ").trim();
-          if (!term) return [];
-          return searchApi(term, pageIndex + 1, apiOpts);
-        })
-      );
+      var distinctQueries = [];
+      var seenTerms = {};
+      for (var qi = 0; qi < queries.length; qi++) {
+        var term = String(queries[qi] || "").replace(/\+/g, " ").trim().toLowerCase();
+        if (!term || seenTerms[term]) continue;
+        seenTerms[term] = true;
+        distinctQueries.push(term);
+      }
+      var groups = [];
+      for (var b = 0; b < distinctQueries.length; b += 4) {
+        var batch = distinctQueries.slice(b, b + 4);
+        var batchRes = await Promise.all(
+          batch.map(function(term2) {
+            return searchApi(term2, pageIndex + 1, apiOpts);
+          })
+        );
+        for (var bi = 0; bi < batchRes.length; bi++) groups.push(batchRes[bi]);
+        if (b + 4 < distinctQueries.length) {
+          await new Promise(function(r) {
+            setTimeout(r, 120);
+          });
+        }
+      }
       var merged = [];
       var maxLen = 0;
       for (var g = 0; g < groups.length; g++) maxLen = Math.max(maxLen, groups[g].length);
