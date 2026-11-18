@@ -37,9 +37,17 @@ var categories_config_default = {
     {
       filter: "family",
       mode: "keep_existing",
-      rule34Tags: [],
+      rule34Tags: [
+        "family",
+        "stepfamily",
+        "step_family"
+      ],
       title: "Family",
-      xvideosQueries: []
+      xvideosQueries: [
+        "family",
+        "stepfamily",
+        "step+family"
+      ]
     },
     {
       filter: "incest",
@@ -641,9 +649,9 @@ function normalizeLink(link) {
   try {
     var u = new URL(link);
     var path = u.pathname.replace(/\/+$/, "");
-    return (u.protocol + "//" + u.host.toLowerCase() + path).toLowerCase();
+    return (u.protocol + "//" + u.host.toLowerCase() + path + u.search).toLowerCase();
   } catch (e) {
-    return String(link).split(/[?#]/)[0].replace(/\/+$/, "").toLowerCase();
+    return String(link).split("#")[0].replace(/\/+$/, "").toLowerCase();
   }
 }
 function normalizeText(s) {
@@ -1738,9 +1746,39 @@ function build3DContext(opts) {
   };
 }
 async function get3DPostsForFilter(ctx, filter, page) {
-  var cached = await ensure3DPool(ctx);
-  if (!cached) return null;
-  return getBucketPosts(cached, filter, page);
+  var kvStore = ctx && ctx.kvStore;
+  var cached = null;
+  try {
+    cached = await read3DCache(kvStore);
+  } catch (e) {
+    cached = null;
+  }
+  if (cached) {
+    var bucket = getBucketPosts(cached, filter, page);
+    if (bucket && bucket.length > 0) return bucket;
+  }
+  var direct = [];
+  try {
+    if (filter === "homepage") {
+      var grids = await Promise.all([
+        ctx.fetchGrid("3d").catch(function() {
+          return [];
+        }),
+        ctx.fetchGrid("sfm").catch(function() {
+          return [];
+        })
+      ]);
+      direct = dedupePosts(keepLongEnough((grids[0] || []).concat(grids[1] || [])));
+    } else if (typeof ctx.fetchCategory3D === "function") {
+      direct = dedupePosts(keepLongEnough(await ctx.fetchCategory3D(filter, []) || []));
+    }
+  } catch (e) {
+    direct = [];
+  }
+  warm3DInBackground(ctx);
+  var pageNum = Math.max(1, page || 1);
+  var start = (pageNum - 1) * 60;
+  return direct.slice(start, start + 60);
 }
 var getPostsImpl = async function(params) {
   var filter = params.filter;
@@ -1762,8 +1800,7 @@ var getPostsImpl = async function(params) {
     kvStore
   });
   if (await is3DOn(kvStore)) {
-    var threeDPosts = await get3DPostsForFilter(threeDContext, filter, page);
-    if (threeDPosts) return threeDPosts;
+    return await get3DPostsForFilter(threeDContext, filter, page);
   } else if (page <= 1) {
     warm3DInBackground(threeDContext);
   }
@@ -1900,7 +1937,12 @@ var getSearchPostsImpl = async function(params) {
       signal,
       kvStore
     });
-    cached = await ensure3DPool(threeDContext);
+    try {
+      cached = await read3DCache(kvStore);
+    } catch (e) {
+      cached = null;
+    }
+    if (!cached) warm3DInBackground(threeDContext);
   }
   var fetchSitePage = async function(sp) {
     var pageIndex = Math.max(0, sp - 1);

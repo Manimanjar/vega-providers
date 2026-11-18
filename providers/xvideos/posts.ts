@@ -3,6 +3,7 @@ import config from "../categories.config.json";
 import {
   is3DOn,
   ensure3DPool,
+  read3DCache,
   warm3DInBackground,
   getBucketPosts,
   intersectWithPool,
@@ -463,10 +464,51 @@ function build3DContext(opts) {
   };
 }
 
+// 3D-only mode, FAST path (user, 2026-11-18): the old code awaited the
+// full sweep (~60s: 14 keyword searches + 12 category combined searches
+// + the relation pool) on the FIRST 3D call, so the app timed out and the
+// user saw skeleton screens forever, "No content found", or the fallback
+// general feed. Now: (1) the cached pool bucket is tried first (instant
+// when warm); (2) when the pool is cold or the bucket is empty, a DIRECT
+// combined site search ("<relation> 3d" / "<relation> sfm", or "3d" /
+// "sfm" for the homepage) returns real 3D videos in a few seconds — the
+// site's own index already proved both dimensions; (3) the full sweep
+// is only ever a background warm-up, never blocking a user-facing call.
+// Returns [] (never null) so the caller never falls back to the general
+// feed in 3D mode — showing non-3D videos when the user asked for
+// 3D-only was itself reported as a bug.
 async function get3DPostsForFilter(ctx, filter, page) {
-  var cached = await ensure3DPool(ctx);
-  if (!cached) return null;
-  return getBucketPosts(cached, filter, page);
+  var kvStore = ctx && ctx.kvStore;
+  var cached = null;
+  try {
+    cached = await read3DCache(kvStore);
+  } catch (e) {
+    cached = null;
+  }
+  if (cached) {
+    var bucket = getBucketPosts(cached, filter, page);
+    if (bucket && bucket.length > 0) return bucket;
+  }
+  // Pool cold or bucket empty: direct combined search, fast.
+  var direct = [];
+  try {
+    if (filter === "homepage") {
+      var grids = await Promise.all([
+        ctx.fetchGrid("3d").catch(function () { return []; }),
+        ctx.fetchGrid("sfm").catch(function () { return []; }),
+      ]);
+      direct = dedupePosts(keepLongEnough((grids[0] || []).concat(grids[1] || [])));
+    } else if (typeof ctx.fetchCategory3D === "function") {
+      direct = dedupePosts(keepLongEnough(await ctx.fetchCategory3D(filter, []) || []));
+    }
+  } catch (e) {
+    direct = [];
+  }
+  // Build the pool in the background for next time; never awaited here.
+  warm3DInBackground(ctx);
+  var pageNum = Math.max(1, page || 1);
+  var start = (pageNum - 1) * 60;
+  return direct.slice(start, start + 60);
 }
 
 const getPostsImpl = async function (params) {
@@ -485,10 +527,11 @@ const getPostsImpl = async function (params) {
 
   // 3D-only mode ("3D content only" toggle in the provider settings):
   // the same 10 categories, only 3D / animation content inside them.
-  // The pool is swept once and cached for an hour; while the toggle is
-  // OFF the cache is warmed in the background (at most once an hour)
-  // so turning it on feels instant. If the pool is unavailable the
-  // normal feed is served instead — never a black screen.
+  // get3DPostsForFilter is FAST (cached pool, else a direct combined
+  // site search) — the full sweep only ever runs as a background
+  // warm-up. In 3D mode the result is returned as-is, even when empty:
+  // falling through to the general feed showed non-3D videos after
+  // the user explicitly asked for 3D-only (user, 2026-11-18).
   var threeDContext = build3DContext({
     baseUrl: baseUrl,
     axios: axios,
@@ -498,8 +541,7 @@ const getPostsImpl = async function (params) {
     kvStore: kvStore,
   });
   if (await is3DOn(kvStore)) {
-    var threeDPosts = await get3DPostsForFilter(threeDContext, filter, page);
-    if (threeDPosts) return threeDPosts;
+    return await get3DPostsForFilter(threeDContext, filter, page);
   } else if (page <= 1) {
     warm3DInBackground(threeDContext);
   }
@@ -679,6 +721,11 @@ const getSearchPostsImpl = async function (params) {
 
   // 3D-only mode: the verified 3D pool (built once, cached 1h). The
   // pool is loaded once here and closed over by fetchSitePage.
+  // FAST read only (user, 2026-11-18): the old code awaited the full
+  // ~60s sweep here, so the first 3D search timed out. read3DCache
+  // returns the cached pool instantly or null; when null, the direct
+  // "<query> 3d" search + title filter below still returns real 3D
+  // results, and the sweep is kicked off in the background.
   var threeDOn = await is3DOn(kvStore);
   var cached = null;
   if (threeDOn) {
@@ -690,7 +737,12 @@ const getSearchPostsImpl = async function (params) {
       signal: signal,
       kvStore: kvStore,
     });
-    cached = await ensure3DPool(threeDContext);
+    try {
+      cached = await read3DCache(kvStore);
+    } catch (e) {
+      cached = null;
+    }
+    if (!cached) warm3DInBackground(threeDContext);
   }
 
   // One site search page (sp is 1-based; XVideos search pages are

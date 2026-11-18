@@ -498,9 +498,17 @@ export function normalizeLink(link) {
   try {
     var u = new URL(link);
     var path = u.pathname.replace(/\/+$/, "");
-    return (u.protocol + "//" + u.host.toLowerCase() + path).toLowerCase();
+    // Keep the query string: PornHub's video identity lives in it
+    // (/view_video.php?viewkey=XXXX — the path alone is identical
+    // for every video, so dropping the query collapsed all PornHub
+    // videos into one dedupe key). XVideos/Rule34Video carry the ID
+    // in the path and rarely have a query, so including it is harmless
+    // there.
+    return (u.protocol + "//" + u.host.toLowerCase() + path + u.search).toLowerCase();
   } catch (e) {
-    return String(link).split(/[?#]/)[0].replace(/\/+$/, "").toLowerCase();
+    // Malformed URL: keep the query (it may carry the video ID, as
+    // with PornHub's ?viewkey=) and drop only the fragment.
+    return String(link).split("#")[0].replace(/\/+$/, "").toLowerCase();
   }
 }
 

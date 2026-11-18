@@ -37,9 +37,17 @@ var categories_config_default = {
     {
       filter: "family",
       mode: "keep_existing",
-      rule34Tags: [],
+      rule34Tags: [
+        "family",
+        "stepfamily",
+        "step_family"
+      ],
       title: "Family",
-      xvideosQueries: []
+      xvideosQueries: [
+        "family",
+        "stepfamily",
+        "step+family"
+      ]
     },
     {
       filter: "incest",
@@ -641,9 +649,9 @@ function normalizeLink(link) {
   try {
     var u = new URL(link);
     var path = u.pathname.replace(/\/+$/, "");
-    return (u.protocol + "//" + u.host.toLowerCase() + path).toLowerCase();
+    return (u.protocol + "//" + u.host.toLowerCase() + path + u.search).toLowerCase();
   } catch (e) {
-    return String(link).split(/[?#]/)[0].replace(/\/+$/, "").toLowerCase();
+    return String(link).split("#")[0].replace(/\/+$/, "").toLowerCase();
   }
 }
 function normalizeText(s) {
@@ -1762,6 +1770,88 @@ function build3DContext(opts) {
       }
       return confirmed;
     },
+    // FAST direct 3D category fetch (user, 2026-11-18): the full
+    // fetchCategory3D above verifies every candidate by fetching its
+    // video page (tags + video_categories) and tag-verifies 150 pool
+    // videos — accurate, but far too slow (~30-60s) to block a
+    // user-facing call. This light version fetches the combined
+    // searches ("/search/<term>-3d/", "/search/<term>-sfm/", page 1)
+    // and keeps videos whose TITLE names the relation, then verifies
+    // the first 16 by fetching their video pages (tags +
+    // video_categories) — the only place 3D-ness is proven on this
+    // site, since titles use creator names (Zeus3DX, SFM) instead of
+    // the literal word "3d". Title-only filtering returned almost
+    // nothing (mom 1, sister 0) because R34 titles rarely name both
+    // the relation and "3d". The page check is what finds the real
+    // 3D relation videos; the background sweep fills the pool for
+    // completeness later.
+    fetchCategory3DFast: async function(filter) {
+      var terms = searchTermsFor(filter, "rule34video", 3);
+      if (terms.length === 0) return [];
+      var words = R34_CATEGORY_WORDS[filter] || [];
+      if (words.length === 0) return [];
+      var grids = [];
+      for (var ti = 0; ti < terms.length; ti++) {
+        for (var ki = 0; ki < 2; ki++) {
+          var kw = ki === 0 ? "3d" : "sfm";
+          var dash = encodeURIComponent((terms[ti] + "-" + kw).trim().replace(/\s+/g, "-"));
+          var targetUrl = opts.baseUrl + "/search/" + dash + "/";
+          try {
+            var grid = await parseVideoGrid({
+              url: targetUrl,
+              baseUrl: opts.baseUrl,
+              axios: opts.axios,
+              cheerio: opts.cheerio,
+              commonHeaders: opts.commonHeaders,
+              signal: opts.signal,
+              kvStore: opts.kvStore,
+              requireVideo: true
+            });
+            (grid || []).forEach(function(p) {
+              grids.push(p);
+            });
+          } catch (e) {
+          }
+          if (ti < terms.length - 1 || ki === 0) {
+            await new Promise(function(resolve) {
+              setTimeout(resolve, 300);
+            });
+          }
+        }
+      }
+      var seen = {};
+      var candidates = [];
+      grids.forEach(function(p) {
+        if (!p || !p.link || seen[p.link]) return;
+        seen[p.link] = true;
+        if (/compilation|collection|archive/i.test(p.title || "")) return;
+        if (!matchesRelationWords(p.title, words, filter)) return;
+        candidates.push(p);
+      });
+      var confirmed = [];
+      var toVerify = [];
+      candidates.forEach(function(p) {
+        if (titleMatchesAnyKeyword(p.title)) confirmed.push(p);
+        else toVerify.push(p);
+      });
+      var checkList = toVerify.slice(0, 24);
+      for (var i = 0; i < checkList.length; i += 4) {
+        var batch = checkList.slice(i, i + 4);
+        var metas = await Promise.all(batch.map(function(p) {
+          return getVideoMetaCached(p.link);
+        }));
+        for (var j = 0; j < batch.length; j++) {
+          var meta = metas[j] || { tags: "", is3D: false };
+          if (meta.is3D && (matchesRelationWords(batch[j].title, words, filter) || matchesRelationWords(meta.tags, words, filter))) confirmed.push(batch[j]);
+        }
+        if (i + 4 < checkList.length) {
+          await new Promise(function(resolve) {
+            setTimeout(resolve, 300);
+          });
+        }
+      }
+      return confirmed;
+    },
     // Phase 2b of the sweep: the relation pool. Most relation videos
     // carry an incest or family tag, so search the incest/family
     // combined searches and classify each hit by its relation words
@@ -1922,9 +2012,41 @@ async function fetchVideoPageMeta(link, opts) {
   return { tags: tagText, is3D };
 }
 async function get3DPostsForFilter(ctx, filter, page) {
-  var cached = await ensure3DPool(ctx);
-  if (!cached) return null;
-  return getBucketPosts(cached, filter, page);
+  var kvStore = ctx && ctx.kvStore;
+  var cached = null;
+  try {
+    cached = await read3DCache(kvStore);
+  } catch (e) {
+    cached = null;
+  }
+  if (cached) {
+    var bucket = getBucketPosts(cached, filter, page);
+    if (bucket && bucket.length > 0) return bucket;
+  }
+  var direct = [];
+  try {
+    if (filter === "homepage") {
+      var grids = await Promise.all([
+        ctx.fetchGrid("3d").catch(function() {
+          return [];
+        }),
+        ctx.fetchGrid("sfm").catch(function() {
+          return [];
+        })
+      ]);
+      direct = dedupePosts(keepLongEnough((grids[0] || []).concat(grids[1] || [])));
+    } else if (typeof ctx.fetchCategory3DFast === "function") {
+      direct = dedupePosts(keepLongEnough(await ctx.fetchCategory3DFast(filter) || []));
+    } else if (typeof ctx.fetchCategory3D === "function") {
+      direct = dedupePosts(keepLongEnough(await ctx.fetchCategory3D(filter, []) || []));
+    }
+  } catch (e) {
+    direct = [];
+  }
+  warm3DInBackground(ctx);
+  var pageNum = Math.max(1, page || 1);
+  var start = (pageNum - 1) * 60;
+  return direct.slice(start, start + 60);
 }
 var getPostsImpl = async function(params) {
   var filter = params.filter;
@@ -1946,8 +2068,7 @@ var getPostsImpl = async function(params) {
     kvStore
   });
   if (await is3DOn(kvStore)) {
-    var threeDPosts = await get3DPostsForFilter(threeDContext, filter, page);
-    if (threeDPosts) return threeDPosts;
+    return await get3DPostsForFilter(threeDContext, filter, page);
   } else if (page <= 1) {
     warm3DInBackground(threeDContext);
   }
@@ -2084,7 +2205,12 @@ var getSearchPostsImpl = async function(params) {
       signal,
       kvStore
     });
-    cached = await ensure3DPool(threeDContext);
+    try {
+      cached = await read3DCache(kvStore);
+    } catch (e) {
+      cached = null;
+    }
+    if (!cached) warm3DInBackground(threeDContext);
   }
   var fetchSitePage = async function(sp) {
     var targetUrl = sp > 1 ? baseUrl + "/search/" + cleanQuery + "/" + sp + "/" : baseUrl + "/search/" + cleanQuery + "/";

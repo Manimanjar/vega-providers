@@ -3,6 +3,7 @@ import config from "../categories.config.json";
 import {
   is3DOn,
   ensure3DPool,
+  read3DCache,
   warm3DInBackground,
   getBucketPosts,
   intersectWithPool,
@@ -528,6 +529,88 @@ function build3DContext(opts) {
       }
       return confirmed;
     },
+    // FAST direct 3D category fetch (user, 2026-11-18): the full
+    // fetchCategory3D above verifies every candidate by fetching its
+    // video page (tags + video_categories) and tag-verifies 150 pool
+    // videos — accurate, but far too slow (~30-60s) to block a
+    // user-facing call. This light version fetches the combined
+    // searches ("/search/<term>-3d/", "/search/<term>-sfm/", page 1)
+    // and keeps videos whose TITLE names the relation, then verifies
+    // the first 16 by fetching their video pages (tags +
+    // video_categories) — the only place 3D-ness is proven on this
+    // site, since titles use creator names (Zeus3DX, SFM) instead of
+    // the literal word "3d". Title-only filtering returned almost
+    // nothing (mom 1, sister 0) because R34 titles rarely name both
+    // the relation and "3d". The page check is what finds the real
+    // 3D relation videos; the background sweep fills the pool for
+    // completeness later.
+    fetchCategory3DFast: async function (filter) {
+      var terms = searchTermsFor(filter, "rule34video", 3);
+      if (terms.length === 0) return [];
+      var words = R34_CATEGORY_WORDS[filter] || [];
+      if (words.length === 0) return [];
+      var grids = [];
+      for (var ti = 0; ti < terms.length; ti++) {
+        for (var ki = 0; ki < 2; ki++) {
+          var kw = ki === 0 ? "3d" : "sfm";
+          var dash = encodeURIComponent((terms[ti] + "-" + kw).trim().replace(/\s+/g, "-"));
+          var targetUrl = opts.baseUrl + "/search/" + dash + "/";
+          try {
+            var grid = await parseVideoGrid({
+              url: targetUrl,
+              baseUrl: opts.baseUrl,
+              axios: opts.axios,
+              cheerio: opts.cheerio,
+              commonHeaders: opts.commonHeaders,
+              signal: opts.signal,
+              kvStore: opts.kvStore,
+              requireVideo: true,
+            });
+            (grid || []).forEach(function (p) { grids.push(p); });
+          } catch (e) {
+            // One failed term never fails the category.
+          }
+          if (ti < terms.length - 1 || ki === 0) {
+            await new Promise(function (resolve) { setTimeout(resolve, 300); });
+          }
+        }
+      }
+      // Candidates: title names the relation (the combined search
+      // already matched "3d" somewhere — title, tags or description).
+      // Compilations are grab-bags, never a specific relation.
+      var seen = {};
+      var candidates = [];
+      grids.forEach(function (p) {
+        if (!p || !p.link || seen[p.link]) return;
+        seen[p.link] = true;
+        if (/compilation|collection|archive/i.test(p.title || "")) return;
+        if (!matchesRelationWords(p.title, words, filter)) return;
+        candidates.push(p);
+      });
+      // Title alone confirms only when it also names a 3D keyword.
+      var confirmed = [];
+      var toVerify = [];
+      candidates.forEach(function (p) {
+        if (titleMatchesAnyKeyword(p.title)) confirmed.push(p);
+        else toVerify.push(p);
+      });
+      // Verify the first 24 by page (tags + video_categories).
+      var checkList = toVerify.slice(0, 24);
+      for (var i = 0; i < checkList.length; i += 4) {
+        var batch = checkList.slice(i, i + 4);
+        var metas = await Promise.all(batch.map(function (p) {
+          return getVideoMetaCached(p.link);
+        }));
+        for (var j = 0; j < batch.length; j++) {
+          var meta = metas[j] || { tags: "", is3D: false };
+          if (meta.is3D && (matchesRelationWords(batch[j].title, words, filter) || matchesRelationWords(meta.tags, words, filter))) confirmed.push(batch[j]);
+        }
+        if (i + 4 < checkList.length) {
+          await new Promise(function (resolve) { setTimeout(resolve, 300); });
+        }
+      }
+      return confirmed;
+    },
     // Phase 2b of the sweep: the relation pool. Most relation videos
     // carry an incest or family tag, so search the incest/family
     // combined searches and classify each hit by its relation words
@@ -733,10 +816,52 @@ async function fetchVideoPageMeta(link, opts) {
   return { tags: tagText, is3D: is3D };
 }
 
+// 3D-only mode, FAST path (user, 2026-11-18): the old code awaited the
+// full sweep (~60s) on the FIRST 3D call, so the app timed out and the
+// user saw skeleton screens forever, "No content found", or the fallback
+// general feed. Now: (1) the cached pool bucket is tried first (instant
+// when warm); (2) when the pool is cold or the bucket is empty, a DIRECT
+// light combined search (fetchCategory3DFast: title must name both the
+// relation and a 3D keyword; "3d"/"sfm" for the homepage) returns real
+// 3D videos in a few seconds; (3) the full sweep is only ever a
+// background warm-up, never blocking a user-facing call. Returns []
+// (never null) so the caller never falls back to the general feed in
+// 3D mode — showing non-3D videos when the user asked for 3D-only was
+// itself reported as a bug.
 async function get3DPostsForFilter(ctx, filter, page) {
-  var cached = await ensure3DPool(ctx);
-  if (!cached) return null;
-  return getBucketPosts(cached, filter, page);
+  var kvStore = ctx && ctx.kvStore;
+  var cached = null;
+  try {
+    cached = await read3DCache(kvStore);
+  } catch (e) {
+    cached = null;
+  }
+  if (cached) {
+    var bucket = getBucketPosts(cached, filter, page);
+    if (bucket && bucket.length > 0) return bucket;
+  }
+  // Pool cold or bucket empty: direct light combined search, fast.
+  var direct = [];
+  try {
+    if (filter === "homepage") {
+      var grids = await Promise.all([
+        ctx.fetchGrid("3d").catch(function () { return []; }),
+        ctx.fetchGrid("sfm").catch(function () { return []; }),
+      ]);
+      direct = dedupePosts(keepLongEnough((grids[0] || []).concat(grids[1] || [])));
+    } else if (typeof ctx.fetchCategory3DFast === "function") {
+      direct = dedupePosts(keepLongEnough(await ctx.fetchCategory3DFast(filter) || []));
+    } else if (typeof ctx.fetchCategory3D === "function") {
+      direct = dedupePosts(keepLongEnough(await ctx.fetchCategory3D(filter, []) || []));
+    }
+  } catch (e) {
+    direct = [];
+  }
+  // Build the pool in the background for next time; never awaited here.
+  warm3DInBackground(ctx);
+  var pageNum = Math.max(1, page || 1);
+  var start = (pageNum - 1) * 60;
+  return direct.slice(start, start + 60);
 }
 
 const getPostsImpl = async function (params) {
@@ -755,10 +880,11 @@ const getPostsImpl = async function (params) {
 
   // 3D-only mode ("3D content only" toggle in the provider settings):
   // the same 10 categories, only 3D / animation content inside them.
-  // The pool is swept once and cached for an hour; while the toggle is
-  // OFF the cache is warmed in the background (at most once an hour)
-  // so turning it on feels instant. If the pool is unavailable the
-  // normal feed is served instead — never a black screen.
+  // get3DPostsForFilter is FAST (cached pool, else a direct light
+  // combined site search) — the full sweep only ever runs as a
+  // background warm-up. In 3D mode the result is returned as-is, even
+  // when empty: falling through to the general feed showed non-3D
+  // videos after the user explicitly asked for 3D-only (user, 2026-11-18).
   var threeDContext = build3DContext({
     baseUrl: baseUrl,
     axios: axios,
@@ -768,8 +894,7 @@ const getPostsImpl = async function (params) {
     kvStore: kvStore,
   });
   if (await is3DOn(kvStore)) {
-    var threeDPosts = await get3DPostsForFilter(threeDContext, filter, page);
-    if (threeDPosts) return threeDPosts;
+    return await get3DPostsForFilter(threeDContext, filter, page);
   } else if (page <= 1) {
     warm3DInBackground(threeDContext);
   }
@@ -942,6 +1067,11 @@ const getSearchPostsImpl = async function (params) {
   // combined "/search/<query>-3d/" does NOT narrow on this site —
   // verified live 2026-11-18: it returns the same videos as the plain
   // query — so the pool intersection is the only exact filter.
+  // FAST read only (user, 2026-11-18): the old code awaited the full
+  // ~60s sweep here, so the first 3D search timed out. read3DCache
+  // returns the cached pool instantly or null; when null, the title
+  // filter below still returns real 3D results, and the sweep is
+  // kicked off in the background.
   var threeDOn = await is3DOn(kvStore);
   var cached = null;
   if (threeDOn) {
@@ -953,7 +1083,12 @@ const getSearchPostsImpl = async function (params) {
       signal: signal,
       kvStore: kvStore,
     });
-    cached = await ensure3DPool(threeDContext);
+    try {
+      cached = await read3DCache(kvStore);
+    } catch (e) {
+      cached = null;
+    }
+    if (!cached) warm3DInBackground(threeDContext);
   }
 
   // One site search page (sp is 1-based). In 3D mode the page is
