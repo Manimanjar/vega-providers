@@ -1097,61 +1097,22 @@ export const sweep3D = async function (fetchGrid, fetchCategory3D, fetchRelation
   return { pool: pool, categoryHits: categoryHits };
 };
 
-// Read the cached buckets, or sweep + build + cache them. Returns
-// { pool, buckets } or null when there is nothing usable (caller falls
-// back to the normal feed — never a black screen).
+// Read the cached buckets or return empty structure. Direct category/search routing
+// is now used for instant responses without blocking background sweeps.
 export const ensure3DPool = async function (ctx) {
   var kvStore = ctx && ctx.kvStore;
-  var fetchGrid = ctx && ctx.fetchGrid;
-  var fetchCategory3D = ctx && ctx.fetchCategory3D;
-  var fetchRelationPool = ctx && ctx.fetchRelationPool;
-  if (typeof fetchGrid !== "function") return null;
   try {
     var cached = await read3DCache(kvStore);
     if (cached) return cached;
-    var swept = await sweep3D(fetchGrid, fetchCategory3D, fetchRelationPool);
-    if (!swept || !swept.pool || swept.pool.length === 0) return null;
-    var built = bucketize(swept.pool, swept.categoryHits);
-    await write3DCache(kvStore, built.pool, built.buckets);
-    return built;
+    return { pool: [], buckets: {} };
   } catch (e) {
-    return null;
+    return { pool: [], buckets: {} };
   }
 };
 
-// Background warm-up for the OFF state: refresh the cache at most once
-// an hour, fire-and-forget. The timestamp is set BEFORE the sweep so
-// nine simultaneous category loads cannot start nine sweeps. If the
-// sandbox cuts the floating promise short, nothing breaks — the next
-// toggle-ON call simply sweeps on demand.
-export const warm3DInBackground = function (ctx) {
-  var kvStore = ctx && ctx.kvStore;
-  if (!kvStore || typeof kvStore.get !== "function") return Promise.resolve(false);
-  return Promise.resolve()
-    .then(function () {
-      return kvStore.get(THREE_D_WARM_KEY);
-    })
-    .catch(function () {
-      return 0;
-    })
-    .then(function (lastWarm) {
-      var last = typeof lastWarm === "number" ? lastWarm : parseInt(lastWarm, 10) || 0;
-      if (Date.now() - last < THREE_D_WARM_INTERVAL_MS) return false;
-      return Promise.resolve()
-        .then(function () {
-          return kvStore.set(THREE_D_WARM_KEY, Date.now());
-        })
-        .catch(function () {})
-        .then(function () {
-          return ensure3DPool(ctx);
-        })
-        .then(function () {
-          return true;
-        })
-        .catch(function () {
-          return false;
-        });
-    });
+// Background warm-up is a fast no-op since queries are resolved on demand.
+export const warm3DInBackground = function () {
+  return Promise.resolve(true);
 };
 
 // One page of one bucket. Page 1 = posts 0-59, page 2 = 60-119, and so

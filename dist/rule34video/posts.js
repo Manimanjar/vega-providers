@@ -373,13 +373,6 @@ var categories_config_default = {
 
 // providers/threeD.ts
 var THREE_D_TOGGLE_KEY = "only3D";
-var THREE_D_CACHE_KEY = "threeDCacheV1";
-var THREE_D_WARM_KEY = "threeDWarmV1";
-var THREE_D_TTL_MS = 36e5;
-var THREE_D_WARM_INTERVAL_MS = 36e5;
-var THREE_D_PAGE_SIZE = 60;
-var THREE_D_WAVE_SIZE = 5;
-var THREE_D_WAVE_GAP_MS = 400;
 var CAT_POOL_META_KEY = "catPoolMetaV1";
 var CAT_POOL_KEY = "catPoolV1";
 var CAT_POOL_TTL_MS = 36e5;
@@ -606,27 +599,6 @@ async function getPooledSearchPage(opts) {
     return fallback.slice(0, PAGE);
   }
 }
-var THREE_D_KEYWORDS = [
-  { kw: "3d", tier: 1 },
-  { kw: "cgi", tier: 1 },
-  { kw: "sfm", tier: 1 },
-  { kw: "mmd", tier: 1 },
-  { kw: "blender", tier: 1 },
-  { kw: "daz3d", tier: 1 },
-  { kw: "3d animation", tier: 1 },
-  { kw: "3d cartoon", tier: 1 },
-  { kw: "3d hentai", tier: 1 },
-  { kw: "vfx", tier: 2 },
-  { kw: "sfx", tier: 2 },
-  { kw: "fx", tier: 2 },
-  { kw: "animation", tier: 3 },
-  { kw: "cartoon", tier: 3 }
-];
-function sleep(ms) {
-  return new Promise(function(resolve) {
-    setTimeout(resolve, ms);
-  });
-}
 var is3DOn = async function(kvStore) {
   if (!kvStore || typeof kvStore.get !== "function") return false;
   try {
@@ -648,14 +620,6 @@ function normalizeLink(link) {
 }
 function normalizeText(s) {
   return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
-}
-function phraseIn(haystackNorm, termNorm) {
-  if (!termNorm) return false;
-  if (haystackNorm === termNorm) return true;
-  if (haystackNorm.indexOf(termNorm + " ") === 0) return true;
-  var endIdx = haystackNorm.lastIndexOf(" " + termNorm);
-  if (endIdx !== -1 && endIdx === haystackNorm.length - termNorm.length - 1) return true;
-  return haystackNorm.indexOf(" " + termNorm + " ") !== -1;
 }
 function buildCategoryTerms() {
   var out = [];
@@ -772,101 +736,6 @@ function buildCategoryTerms() {
   return out;
 }
 var CATEGORY_TERMS = buildCategoryTerms();
-function isKnown3DFilter(filter) {
-  for (var i = 0; i < CATEGORY_TERMS.length; i++) {
-    if (CATEGORY_TERMS[i].filter === filter) return true;
-  }
-  return false;
-}
-var COUSIN_OTHER_PHRASES = [
-  "cousin brother",
-  "cousin bro",
-  "cousin stepbrother",
-  "cousin step brother",
-  "cousin stepbro",
-  "cousin step bro",
-  "cousin dad",
-  "cousin father",
-  "cousin stepdad",
-  "cousin stepfather",
-  "cousin daddy",
-  "cousin mom",
-  "cousin mother",
-  "cousin stepmom",
-  "cousin stepmother",
-  "cousin daughter",
-  "cousin stepdaughter",
-  "cousin aunt",
-  "cousin auntie",
-  "cousin aunty",
-  "cousin stepaunt",
-  "cousin uncle",
-  "cousin nephew",
-  "cousin niece",
-  "cousin son"
-];
-function hasCousinOtherPhrase(text) {
-  var norm = normalizeText(text);
-  if (!norm) return false;
-  for (var i = 0; i < COUSIN_OTHER_PHRASES.length; i++) {
-    if (phraseIn(norm, COUSIN_OTHER_PHRASES[i])) return true;
-  }
-  return false;
-}
-function matchesRelationWords(text, words, filter) {
-  var norm = normalizeText(text);
-  if (!norm) return false;
-  var skipBareCousin = filter === "rel_sister" && hasCousinOtherPhrase(norm);
-  for (var i = 0; i < words.length; i++) {
-    var term = normalizeText(words[i]);
-    if (!term) continue;
-    if (skipBareCousin && term === "cousin") continue;
-    if (phraseIn(norm, term)) return true;
-  }
-  return false;
-}
-function searchTermsFor(filter, site, maxN) {
-  var n = maxN || 3;
-  var categories = categories_config_default && categories_config_default.categories || [];
-  for (var i = 0; i < categories.length; i++) {
-    var c = categories[i];
-    if (c.filter !== filter) continue;
-    var raw = site === "xvideos" ? c.xvideosQueries || [] : c.rule34Tags || [];
-    var out = [];
-    var seen = {};
-    for (var j = 0; j < raw.length && out.length < n; j++) {
-      var t = String(raw[j] || "").replace(/\+/g, " ").trim();
-      if (!t) continue;
-      var key = t.toLowerCase();
-      if (seen[key]) continue;
-      seen[key] = true;
-      out.push(t);
-    }
-    return out;
-  }
-  return [];
-}
-function titleMatchesTerms(title, terms, filter) {
-  var norm = normalizeText(title);
-  if (!norm) return false;
-  var skipBareCousin = filter === "rel_sister" && hasCousinOtherPhrase(norm);
-  for (var i = 0; i < terms.length; i++) {
-    var term = terms[i];
-    if (skipBareCousin && term === "cousin") continue;
-    if (phraseIn(norm, term)) return true;
-  }
-  return false;
-}
-function leanPost(post) {
-  return {
-    title: post.title || "",
-    link: post.link || "",
-    image: post.image || "",
-    tag: post.tag,
-    cornerTag: post.cornerTag,
-    _dur: post._dur || 0
-  };
-}
 function dedupePosts(posts) {
   var seen = {};
   var out = [];
@@ -879,267 +748,6 @@ function dedupePosts(posts) {
     out.push(p);
   }
   return out;
-}
-function keepLongEnough(posts) {
-  return posts.filter(function(p) {
-    var d = p && p._dur || 0;
-    return d === 0 || d >= 120;
-  });
-}
-function bucketize(pool, categoryHits) {
-  var buckets = {};
-  for (var i = 0; i < CATEGORY_TERMS.length; i++) {
-    buckets[CATEGORY_TERMS[i].filter] = [];
-  }
-  var poolKeys = {};
-  for (var p = 0; p < pool.length; p++) {
-    poolKeys[normalizeLink(pool[p].link)] = p;
-  }
-  if (categoryHits) {
-    for (var f in categoryHits) {
-      if (!buckets[f]) continue;
-      var hits = categoryHits[f] || [];
-      for (var h = 0; h < hits.length; h++) {
-        var idx = poolKeys[normalizeLink(hits[h].link)];
-        if (idx !== void 0 && buckets[f].indexOf(idx) === -1) {
-          buckets[f].push(idx);
-        }
-      }
-    }
-  }
-  for (var p2 = 0; p2 < pool.length; p2++) {
-    var post = pool[p2];
-    for (var c = 0; c < CATEGORY_TERMS.length; c++) {
-      var cat = CATEGORY_TERMS[c];
-      if (cat.filter === "homepage") continue;
-      if (cat.terms.length === 0) continue;
-      if (buckets[cat.filter].indexOf(p2) !== -1) continue;
-      if (titleMatchesTerms(post.title, cat.terms, cat.filter)) {
-        buckets[cat.filter].push(p2);
-      }
-    }
-  }
-  buckets["homepage"] = pool.map(function(_, idx2) {
-    return idx2;
-  });
-  return { pool, buckets };
-}
-var read3DCache = async function(kvStore) {
-  if (!kvStore || typeof kvStore.get !== "function") return null;
-  try {
-    var loaded = await readChunkedPool(kvStore, THREE_D_CACHE_KEY);
-    if (!loaded || !loaded.meta) return null;
-    if (!loaded.meta.expiresAt || loaded.meta.expiresAt <= Date.now()) {
-      return null;
-    }
-    if (!loaded.meta.buckets) return null;
-    return {
-      expiresAt: loaded.meta.expiresAt,
-      pool: loaded.posts,
-      buckets: loaded.meta.buckets
-    };
-  } catch (e) {
-    return null;
-  }
-};
-var write3DCache = async function(kvStore, pool, buckets) {
-  if (!kvStore || typeof kvStore.set !== "function") return false;
-  try {
-    return await writeChunkedPool(kvStore, THREE_D_CACHE_KEY, pool, {
-      expiresAt: Date.now() + THREE_D_TTL_MS,
-      buckets
-    });
-  } catch (e) {
-    return false;
-  }
-};
-var sweep3D = async function(fetchGrid, fetchCategory3D, fetchRelationPool) {
-  var pool = [];
-  for (var w = 0; w < THREE_D_KEYWORDS.length; w += THREE_D_WAVE_SIZE) {
-    var wave = THREE_D_KEYWORDS.slice(w, w + THREE_D_WAVE_SIZE);
-    var results = await Promise.all(
-      wave.map(function(entry) {
-        return Promise.resolve().then(function() {
-          return fetchGrid(entry.kw);
-        }).catch(function() {
-          return [];
-        });
-      })
-    );
-    for (var i = 0; i < results.length; i++) {
-      var list = results[i] || [];
-      for (var j = 0; j < list.length; j++) pool.push(list[j]);
-    }
-    if (w + THREE_D_WAVE_SIZE < THREE_D_KEYWORDS.length) {
-      await sleep(THREE_D_WAVE_GAP_MS);
-    }
-  }
-  pool = dedupePosts(pool);
-  pool = keepLongEnough(pool);
-  pool = pool.map(leanPost);
-  var categoryHits = {};
-  if (typeof fetchCategory3D === "function" && pool.length > 0) {
-    var filters = [];
-    for (var c = 0; c < CATEGORY_TERMS.length; c++) {
-      if (CATEGORY_TERMS[c].filter !== "homepage") filters.push(CATEGORY_TERMS[c].filter);
-    }
-    for (var w2 = 0; w2 < filters.length; w2 += THREE_D_WAVE_SIZE) {
-      var wave2 = filters.slice(w2, w2 + THREE_D_WAVE_SIZE);
-      var catResults = await Promise.all(
-        wave2.map(function(filter) {
-          return Promise.resolve().then(function() {
-            return fetchCategory3D(filter, pool);
-          }).catch(function() {
-            return [];
-          });
-        })
-      );
-      for (var k = 0; k < wave2.length; k++) {
-        categoryHits[wave2[k]] = dedupePosts(keepLongEnough(catResults[k] || []));
-      }
-      if (w2 + THREE_D_WAVE_SIZE < filters.length) {
-        await sleep(THREE_D_WAVE_GAP_MS);
-      }
-    }
-    if (typeof fetchRelationPool === "function") {
-      try {
-        var relationHits = await fetchRelationPool(pool);
-        if (relationHits) {
-          for (var rf in relationHits) {
-            var existing = categoryHits[rf] || [];
-            categoryHits[rf] = dedupePosts(
-              keepLongEnough(existing.concat(relationHits[rf] || []))
-            );
-          }
-        }
-      } catch (e) {
-      }
-    }
-    var poolKeys = {};
-    for (var p = 0; p < pool.length; p++) poolKeys[normalizeLink(pool[p].link)] = true;
-    var hitLists = [];
-    for (var f3 in categoryHits) {
-      var dedupedHits = [];
-      var hitSeen = {};
-      (categoryHits[f3] || []).forEach(function(h) {
-        var k2 = normalizeLink(h.link);
-        if (!k2 || hitSeen[k2] || poolKeys[k2]) return;
-        hitSeen[k2] = true;
-        dedupedHits.push(h);
-      });
-      if (dedupedHits.length > 0) hitLists.push(dedupedHits);
-    }
-    var maxHits = 0;
-    for (var hl = 0; hl < hitLists.length; hl++) maxHits = Math.max(maxHits, hitLists[hl].length);
-    for (var hi = 0; hi < maxHits; hi++) {
-      for (var hj = 0; hj < hitLists.length; hj++) {
-        var hit = hitLists[hj][hi];
-        if (!hit) continue;
-        var key = normalizeLink(hit.link);
-        if (!key || poolKeys[key]) continue;
-        poolKeys[key] = true;
-        pool.push(leanPost(hit));
-      }
-    }
-  }
-  return { pool, categoryHits };
-};
-var ensure3DPool = async function(ctx) {
-  var kvStore = ctx && ctx.kvStore;
-  var fetchGrid = ctx && ctx.fetchGrid;
-  var fetchCategory3D = ctx && ctx.fetchCategory3D;
-  var fetchRelationPool = ctx && ctx.fetchRelationPool;
-  if (typeof fetchGrid !== "function") return null;
-  try {
-    var cached = await read3DCache(kvStore);
-    if (cached) return cached;
-    var swept = await sweep3D(fetchGrid, fetchCategory3D, fetchRelationPool);
-    if (!swept || !swept.pool || swept.pool.length === 0) return null;
-    var built = bucketize(swept.pool, swept.categoryHits);
-    await write3DCache(kvStore, built.pool, built.buckets);
-    return built;
-  } catch (e) {
-    return null;
-  }
-};
-var warm3DInBackground = function(ctx) {
-  var kvStore = ctx && ctx.kvStore;
-  if (!kvStore || typeof kvStore.get !== "function") return Promise.resolve(false);
-  return Promise.resolve().then(function() {
-    return kvStore.get(THREE_D_WARM_KEY);
-  }).catch(function() {
-    return 0;
-  }).then(function(lastWarm) {
-    var last = typeof lastWarm === "number" ? lastWarm : parseInt(lastWarm, 10) || 0;
-    if (Date.now() - last < THREE_D_WARM_INTERVAL_MS) return false;
-    return Promise.resolve().then(function() {
-      return kvStore.set(THREE_D_WARM_KEY, Date.now());
-    }).catch(function() {
-    }).then(function() {
-      return ensure3DPool(ctx);
-    }).then(function() {
-      return true;
-    }).catch(function() {
-      return false;
-    });
-  });
-};
-function getBucketPosts(cached, filter, page) {
-  if (!cached || !cached.pool || !cached.buckets) return null;
-  if (!isKnown3DFilter(filter)) return null;
-  var indices = cached.buckets[filter];
-  if (!Array.isArray(indices)) return null;
-  var pageNum = Math.max(1, page || 1);
-  var start = (pageNum - 1) * THREE_D_PAGE_SIZE;
-  var slice = indices.slice(start, start + THREE_D_PAGE_SIZE);
-  var out = [];
-  for (var i = 0; i < slice.length; i++) {
-    var post = cached.pool[slice[i]];
-    if (post) out.push(post);
-  }
-  return out;
-}
-function intersectWithPool(posts, cached) {
-  if (!cached || !cached.pool) return posts || [];
-  var poolKeys = {};
-  for (var i = 0; i < cached.pool.length; i++) {
-    poolKeys[normalizeLink(cached.pool[i].link)] = true;
-  }
-  return (posts || []).filter(function(p) {
-    return p && p.link && poolKeys[normalizeLink(p.link)];
-  });
-}
-function poolCategorySearch(cached, query) {
-  if (!cached || !cached.pool || !cached.buckets) return [];
-  var out = [];
-  for (var i = 0; i < CATEGORY_TERMS.length; i++) {
-    var cat = CATEGORY_TERMS[i];
-    if (cat.filter === "homepage") continue;
-    if (cat.terms.length === 0) continue;
-    if (!titleMatchesTerms(query, cat.terms, cat.filter)) continue;
-    var idxs = cached.buckets[cat.filter] || [];
-    for (var j = 0; j < idxs.length; j++) {
-      var post = cached.pool[idxs[j]];
-      if (post) out.push(post);
-    }
-  }
-  return out;
-}
-function poolTitleSearch(cached, query) {
-  if (!cached || !cached.pool) return [];
-  var q = normalizeText(query);
-  if (!q) return [];
-  return cached.pool.filter(function(p) {
-    return p && p.title && phraseIn(normalizeText(p.title), q);
-  });
-}
-function titleMatchesAnyKeyword(title) {
-  var norm = normalizeText(title);
-  if (!norm) return false;
-  for (var i = 0; i < THREE_D_KEYWORDS.length; i++) {
-    if (phraseIn(norm, normalizeText(THREE_D_KEYWORDS[i].kw))) return true;
-  }
-  return false;
 }
 
 // providers/series.ts
@@ -1594,337 +1202,72 @@ function getCategory(filter) {
     return category.filter === filter;
   });
 }
-function build3DContext(opts) {
-  var tagCache = {};
-  function getVideoMetaCached(link) {
-    if (!tagCache[link]) {
-      tagCache[link] = fetchVideoPageMeta(link, opts).catch(function() {
-        return { tags: "", is3D: false };
-      });
-    }
-    return tagCache[link];
-  }
-  return {
-    kvStore: opts.kvStore,
-    fetchGrid: function(keyword) {
-      var dash = encodeURIComponent(keyword.trim().replace(/\s+/g, "-"));
-      var targetUrl = opts.baseUrl + "/search/" + dash + "/";
-      return parseVideoGrid({
-        url: targetUrl,
-        baseUrl: opts.baseUrl,
-        axios: opts.axios,
-        cheerio: opts.cheerio,
-        commonHeaders: opts.commonHeaders,
-        signal: opts.signal,
-        kvStore: opts.kvStore,
-        requireVideo: true
-      });
-    },
-    // Phase 2 of the sweep: "/search/<term>-3d/" and
-    // "/search/<term>-sfm/", pages 1-2, for MULTIPLE terms per
-    // category (user, 2026-11-18): the plain word, the step- form,
-    // then the cousin form — e.g. Sister searches "sister",
-    // "stepsister" and "cousin". One term alone misses videos the
-    // others find. Rule34Video combined search is OR-ish: a result
-    // matched the category (via tags or title) OR "3d" (via
-    // title/tags) — verified live 2026-11-18.
-    // A pool video appearing here proves nothing about the category,
-    // so pool membership is NOT used as a signal, and the frequency
-    // cap idea was abandoned (a true category video also matches
-    // "3d" in every other category's search, so frequency cannot
-    // tell a true video from a generic compilation). A hit is kept
-    // only when it is 3D AND this relation, where 3D is proven by
-    // the title, the tags, or the page's own video_categories
-    // ('3D' — the site files "Family Rules" as 3D even though
-    // neither its titles nor its tags ever say "3D", so title-only
-    // matching could never find it), and the relation is proven by
-    // a relation word in the title or the tags. Compilations are
-    // grab-bags whose tags cover every category, so they never
-    // confirm a specific relation here (they can still land in
-    // Incest via Phase 2b). Everything that fails stays on
-    // Homepage via the pool, never in a category it does not
-    // belong to.
-    fetchCategory3D: async function(filter, pool) {
-      var terms = searchTermsFor(filter, "rule34video", 3);
-      if (terms.length === 0) return [];
-      var words = R34_CATEGORY_WORDS[filter] || [];
-      if (words.length === 0) return [];
-      var gridJobs = [];
-      terms.forEach(function(term) {
-        ["3d", "sfm"].forEach(function(kw) {
-          [1, 2].forEach(function(page) {
-            var dash = encodeURIComponent((term + "-" + kw).trim().replace(/\s+/g, "-"));
-            var targetUrl = opts.baseUrl + "/search/" + dash + "/" + (page > 1 ? page + "/" : "");
-            gridJobs.push(function() {
-              return parseVideoGrid({
-                url: targetUrl,
-                baseUrl: opts.baseUrl,
-                axios: opts.axios,
-                cheerio: opts.cheerio,
-                commonHeaders: opts.commonHeaders,
-                signal: opts.signal,
-                kvStore: opts.kvStore,
-                requireVideo: true
-              }).catch(function() {
-                return [];
-              });
-            });
-          });
-        });
-      });
-      var groups = [];
-      for (var w = 0; w < gridJobs.length; w += 4) {
-        var wave = gridJobs.slice(w, w + 4);
-        var waveResults = await Promise.all(
-          wave.map(function(job) {
-            return job();
-          })
-        );
-        for (var gi = 0; gi < waveResults.length; gi++) groups.push(waveResults[gi]);
-        if (w + 4 < gridJobs.length) {
-          await new Promise(function(resolve) {
-            setTimeout(resolve, 300);
-          });
-        }
-      }
-      var perTermPosts = [];
-      var gridsPerTerm = 4;
-      for (var t = 0; t < terms.length; t++) {
-        var termPosts = [];
-        for (var g = 0; g < gridsPerTerm; g++) {
-          var grp = groups[t * gridsPerTerm + g] || [];
-          for (var pi = 0; pi < grp.length; pi++) termPosts.push(grp[pi]);
-        }
-        perTermPosts.push(termPosts);
-      }
-      var allPosts = [];
-      var maxTermLen = 0;
-      for (var t2 = 0; t2 < perTermPosts.length; t2++) maxTermLen = Math.max(maxTermLen, perTermPosts[t2].length);
-      for (var i2 = 0; i2 < maxTermLen; i2++) {
-        for (var t3 = 0; t3 < perTermPosts.length; t3++) {
-          if (perTermPosts[t3][i2]) allPosts.push(perTermPosts[t3][i2]);
-        }
-      }
-      var seen = {};
-      var candidates = [];
-      allPosts.forEach(function(p) {
-        if (!p || !p.link || seen[p.link]) return;
-        seen[p.link] = true;
-        if (!titleMatchesAnyKeyword(p.title) && !matchesRelationWords(p.title, words, filter)) return;
-        if (/compilation|collection|archive/i.test(p.title || "")) return;
-        candidates.push(p);
-      });
-      var confirmed = [];
-      var toVerify = [];
-      candidates.forEach(function(p) {
-        if (matchesRelationWords(p.title, words, filter) && titleMatchesAnyKeyword(p.title)) confirmed.push(p);
-        else toVerify.push(p);
-      });
-      var checkList = toVerify.slice().sort(function(a, b2) {
-        var aRel = matchesRelationWords(a.title, words, filter) ? 0 : 1;
-        var bRel = matchesRelationWords(b2.title, words, filter) ? 0 : 1;
-        return aRel - bRel;
-      }).slice(0, 24);
-      for (var i = 0; i < checkList.length; i += 4) {
-        var batch = checkList.slice(i, i + 4);
-        var metas = await Promise.all(batch.map(function(p) {
-          return getVideoMetaCached(p.link);
-        }));
-        for (var j = 0; j < batch.length; j++) {
-          var meta = metas[j] || { tags: "", is3D: false };
-          if (meta.is3D && (matchesRelationWords(batch[j].title, words, filter) || matchesRelationWords(meta.tags, words, filter))) confirmed.push(batch[j]);
-        }
-        if (i + 4 < checkList.length) {
-          await new Promise(function(resolve) {
-            setTimeout(resolve, 300);
-          });
-        }
-      }
-      var poolSlice = (pool || []).filter(function(p) {
-        return p && p.link && !/compilation|collection|archive/i.test(p.title || "");
-      }).slice(0, 150);
-      for (var b = 0; b < poolSlice.length; b += 8) {
-        var poolBatch = poolSlice.slice(b, b + 8);
-        var poolMetas = await Promise.all(
-          poolBatch.map(function(p) {
-            return getVideoMetaCached(p.link);
-          })
-        );
-        for (var k = 0; k < poolBatch.length; k++) {
-          var pm = poolMetas[k] || { tags: "", is3D: false };
-          if (pm.tags && matchesRelationWords(pm.tags, words, filter)) confirmed.push(poolBatch[k]);
-        }
-        if (b + 8 < poolSlice.length) {
-          await new Promise(function(resolve) {
-            setTimeout(resolve, 300);
-          });
-        }
-      }
-      return confirmed;
-    },
-    // Phase 2b of the sweep: the relation pool. Most relation videos
-    // carry an incest or family tag, so search the incest/family
-    // combined searches and classify each hit by its relation words
-    // (title first, then its .vp-tags via the shared page cache).
-    // Rule34Video combined search is OR-ish, so a hit may have
-    // matched only the "3d" half — the page check (video_categories
-    // '3D' + tags) is what confirms it is really 3D. A
-    // compilation's tags span every relation (one scene each), so a
-    // compilation only ever lands in Incest, and only when its tags
-    // confirm incest/family. A hit with no relation signal at all
-    // is dropped from the categories (it stays on Homepage via the
-    // pool). Returns { filter: [posts] }.
-    fetchRelationPool: async function(pool) {
-      var queries = [
-        "incest-3d",
-        "incest-3d/2",
-        "incest-sfm",
-        "incest-sfm/2",
-        "family-3d",
-        "family-3d/2",
-        "family-sfm",
-        "family-sfm/2",
-        "cousin-3d",
-        "cousin-3d/2",
-        "cousin-sfm",
-        "cousin-sfm/2",
-        "cousin",
-        "cousin/2"
-      ];
-      var grids = queries.map(function(dash) {
-        var targetUrl = opts.baseUrl + "/search/" + dash + "/";
-        return parseVideoGrid({
-          url: targetUrl,
-          baseUrl: opts.baseUrl,
-          axios: opts.axios,
-          cheerio: opts.cheerio,
-          commonHeaders: opts.commonHeaders,
-          signal: opts.signal,
-          kvStore: opts.kvStore,
-          requireVideo: true
-        }).catch(function() {
-          return [];
-        });
-      });
-      var groups = await Promise.all(grids);
-      var out = {};
-      var addTo = function(filter, post2) {
-        if (!out[filter]) out[filter] = [];
-        out[filter].push(post2);
-      };
-      var classifyByWords = function(text) {
-        var found = [];
-        for (var f in R34_CATEGORY_WORDS) {
-          if (matchesRelationWords(text, R34_CATEGORY_WORDS[f], f)) found.push(f);
-        }
-        return found;
-      };
-      var seen = {};
-      var candidates = [];
-      groups.forEach(function(g) {
-        (g || []).forEach(function(p) {
-          if (!p || !p.link || seen[p.link]) return;
-          seen[p.link] = true;
-          if (!titleMatchesAnyKeyword(p.title) && classifyByWords(p.title).length === 0) return;
-          candidates.push(p);
-        });
-      });
-      var toVerify = [];
-      candidates.forEach(function(p) {
-        var byTitle2 = classifyByWords(p.title);
-        if (byTitle2.length > 0 && titleMatchesAnyKeyword(p.title)) {
-          byTitle2.forEach(function(f) {
-            addTo(f, p);
-          });
-        } else {
-          toVerify.push(p);
-        }
-      });
-      var checkList = toVerify.slice().sort(function(a, b) {
-        var aRel = classifyByWords(a.title).length > 0 ? 0 : 1;
-        var bRel = classifyByWords(b.title).length > 0 ? 0 : 1;
-        return aRel - bRel;
-      }).slice(0, 60);
-      for (var i = 0; i < checkList.length; i += 4) {
-        var batch = checkList.slice(i, i + 4);
-        var metas = await Promise.all(
-          batch.map(function(p) {
-            return getVideoMetaCached(p.link);
-          })
-        );
-        for (var j = 0; j < batch.length; j++) {
-          var post = batch[j];
-          var meta = metas[j] || { tags: "", is3D: false };
-          if (!meta.is3D) continue;
-          var tags = meta.tags || "";
-          var isCompilation = /compilation|collection|archive/i.test(post.title || "");
-          if (isCompilation) {
-            if (matchesRelationWords(tags, R34_CATEGORY_WORDS.incest, "incest")) addTo("incest", post);
-            continue;
-          }
-          var byTitle = classifyByWords(post.title);
-          var byTags = classifyByWords(tags);
-          var all = byTitle.concat(byTags.filter(function(f) {
-            return byTitle.indexOf(f) === -1;
-          }));
-          if (all.length > 0) {
-            all.forEach(function(f) {
-              addTo(f, post);
-            });
-          }
-        }
-        if (i + 4 < checkList.length) {
-          await new Promise(function(resolve) {
-            setTimeout(resolve, 300);
-          });
-        }
-      }
-      return out;
-    }
-  };
-}
-var R34_CATEGORY_WORDS = {
-  family: ["family", "families", "stepfamily", "stepfamilies", "incest"],
-  incest: ["incest", "family", "families", "stepfamily", "stepfamilies", "taboo"],
-  rel_sister: ["sister", "sisters", "stepsister", "stepsisters", "stepsis", "sis", "step sis", "step sister", "bigsis", "big sis", "lilsis", "lil sis", "little sis", "older sister", "older sisters", "younger sister", "younger sisters", "twin sister", "twin sisters", "cousin", "cousins", "cousin sis", "cousin sister", "cousin stepsis", "cousin step sister", "cousin stepsister", "cousin step sis", "sister-in-law", "step sister in law"],
-  rel_brother: ["brother", "brothers", "stepbrother", "stepbrothers", "stepbro", "bro", "step bro", "step brother", "bigbro", "big bro", "lilbro", "lil bro", "little bro", "older brother", "older brothers", "younger brother", "younger brothers", "cousin brother", "cousin bro", "cousin stepbrother", "cousin step brother", "cousin stepbro", "cousin step bro", "brother-in-law"],
-  rel_mom: ["mom", "moms", "mother", "mothers", "stepmom", "stepmoms", "stepmother", "stepmothers", "step mom", "step mother", "mommy", "mommies", "mama", "mamas", "maa", "mother and son", "milf", "cousin mom", "cousin mother", "cousin stepmom", "cousin stepmother", "mother-in-law"],
-  rel_daughter: ["daughter", "daughters", "stepdaughter", "stepdaughters", "step daughter", "father and daughter", "mother and daughter", "cousin daughter", "cousin stepdaughter", "daughter-in-law", "in laws", "in law", "granddaughter", "granddaughters"],
-  rel_father: ["father", "fathers", "dad", "dads", "stepdad", "stepdads", "stepfather", "stepfathers", "step father", "daddy", "daddies", "papa", "paa", "cousin dad", "cousin father", "cousin stepdad", "cousin stepfather", "cousin daddy", "father-in-law"],
-  rel_aunt: ["aunt", "aunts", "auntie", "aunties", "aunty", "aunties", "stepaunt", "stepaunts", "step aunt", "aunt and nephew", "cousin aunt", "cousin auntie", "cousin aunty", "cousin stepaunt"],
-  rel_grandma: ["grandma", "grandmas", "grandmother", "grandmothers", "grand mother", "grand mothers", "granny", "grannies", "grandmama", "step grandma", "step grandmas"],
-  rel_grandpa: ["grandpa", "grandpas", "grandfather", "grandfathers", "grand father", "grand fathers", "grandad", "grandads", "grandpapa", "step grandpa", "step grandpas"],
-  rel_son: ["son", "sons", "stepson", "stepsons", "step son", "step sons", "grandson", "grandsons"]
-};
-async function fetchVideoPageMeta(link, opts) {
-  var res = await opts.axios.get(link, {
-    headers: Object.assign({}, opts.commonHeaders || {}, {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      Referer: opts.baseUrl + "/"
-    }),
-    timeout: 12e3,
-    signal: opts.signal
-  });
-  var html = res.data || "";
-  var $ = opts.cheerio.load(html);
-  var tags = [];
-  $('.vp-tags a[href*="/tags/"]').each(function(_, el) {
-    var t = $(el).text().trim();
-    if (t && t !== "Tags" && tags.indexOf(t) === -1) tags.push(t);
-  });
-  var tagText = tags.join(" ");
-  var is3D = titleMatchesAnyKeyword(tagText);
-  var catMatch = html.match(/video_categories\s*:\s*'([^']*)'/i) || html.match(/video_categories\s*:\s*"([^"]*)"/i);
-  if (catMatch && catMatch[1]) {
-    var catVal = catMatch[1].toLowerCase();
-    if (/\b3d\b/.test(catVal) || /\banimation\b/.test(catVal)) is3D = true;
-  }
-  return { tags: tagText, is3D };
-}
 async function get3DPostsForFilter(ctx, filter, page) {
-  var cached = await ensure3DPool(ctx);
-  if (!cached) return null;
-  return getBucketPosts(cached, filter, page);
+  var baseUrl = ctx.baseUrl;
+  var axios = ctx.axios;
+  var cheerio = ctx.cheerio;
+  var commonHeaders = ctx.commonHeaders;
+  var signal = ctx.signal;
+  var kvStore = ctx.kvStore;
+  var pageNum = Math.max(1, page || 1);
+  if (filter === "homepage" || !filter) {
+    var homeUrl = pageNum > 1 ? baseUrl + "/categories/3d/" + pageNum + "/" : baseUrl + "/categories/3d/";
+    return parseVideoGrid({
+      url: homeUrl,
+      baseUrl,
+      axios,
+      cheerio,
+      commonHeaders,
+      signal,
+      kvStore,
+      requireVideo: true
+    });
+  }
+  var tagMap = {
+    family: "family",
+    incest: "incest",
+    rel_sister: "sister",
+    rel_mom: "milf",
+    rel_aunt: "aunt",
+    rel_daughter: "daughter",
+    rel_brother: "brother",
+    rel_father: "father",
+    rel_son: "son",
+    rel_grandma: "grandma",
+    rel_grandpa: "grandpa"
+  };
+  var tag = tagMap[filter];
+  if (tag) {
+    var tagUrl = pageNum > 1 ? baseUrl + "/categories/3d/" + pageNum + "/?tag=" + encodeURIComponent(tag) : baseUrl + "/categories/3d/?tag=" + encodeURIComponent(tag);
+    var tagPosts = await parseVideoGrid({
+      url: tagUrl,
+      baseUrl,
+      axios,
+      cheerio,
+      commonHeaders,
+      signal,
+      kvStore,
+      requireVideo: true
+    });
+    if (tagPosts && tagPosts.length > 0) {
+      return tagPosts;
+    }
+  }
+  var primaryTerm = primaryTermFor(filter, "rule34video") || filter;
+  var searchClean = encodeURIComponent(
+    primaryTerm.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-3d"
+  );
+  var fallbackUrl = pageNum > 1 ? baseUrl + "/search/" + searchClean + "/" + pageNum + "/" : baseUrl + "/search/" + searchClean + "/";
+  return parseVideoGrid({
+    url: fallbackUrl,
+    baseUrl,
+    axios,
+    cheerio,
+    commonHeaders,
+    signal,
+    kvStore,
+    requireVideo: true
+  });
 }
 var getPostsImpl = async function(params) {
   var filter = params.filter;
@@ -1937,19 +1280,17 @@ var getPostsImpl = async function(params) {
   var kvStore = providerContext.kvStore;
   var baseUrl = await getBase(kvStore, axios);
   var category = getCategory(filter);
-  var threeDContext = build3DContext({
+  var threeDContext = {
     baseUrl,
     axios,
     cheerio,
     commonHeaders,
     signal,
     kvStore
-  });
+  };
   if (await is3DOn(kvStore)) {
     var threeDPosts = await get3DPostsForFilter(threeDContext, filter, page);
-    if (threeDPosts) return threeDPosts;
-  } else if (page <= 1) {
-    warm3DInBackground(threeDContext);
+    if (threeDPosts && threeDPosts.length > 0) return threeDPosts;
   }
   if (category && category.mode === "keep_existing") {
     var familyUrl = page > 1 ? baseUrl + "/search/family/" + page + "/" : baseUrl + "/search/family/";
@@ -2074,21 +1415,10 @@ var getSearchPostsImpl = async function(params) {
   var normQuery = (searchQuery || "").trim().toLowerCase().replace(/\s+/g, " ");
   var cleanQuery = encodeURIComponent(searchQuery.trim().replace(/\s+/g, "-"));
   var threeDOn = await is3DOn(kvStore);
-  var cached = null;
-  if (threeDOn) {
-    var threeDContext = build3DContext({
-      baseUrl,
-      axios,
-      cheerio,
-      commonHeaders,
-      signal,
-      kvStore
-    });
-    cached = await ensure3DPool(threeDContext);
-  }
   var fetchSitePage = async function(sp) {
-    var targetUrl = sp > 1 ? baseUrl + "/search/" + cleanQuery + "/" + sp + "/" : baseUrl + "/search/" + cleanQuery + "/";
-    var plain = await parseVideoGrid({
+    var searchDash = threeDOn ? encodeURIComponent(cleanQuery + "-3d") : cleanQuery;
+    var targetUrl = sp > 1 ? baseUrl + "/search/" + searchDash + "/" + sp + "/" : baseUrl + "/search/" + searchDash + "/";
+    return parseVideoGrid({
       url: targetUrl,
       baseUrl,
       axios,
@@ -2098,26 +1428,13 @@ var getSearchPostsImpl = async function(params) {
       kvStore,
       requireVideo: true
     });
-    if (!threeDOn) return plain;
-    if (cached) return intersectWithPool(plain, cached);
-    return plain.filter(function(p) {
-      return titleMatchesAnyKeyword(p.title);
-    });
   };
-  var extraPosts = [];
-  if (threeDOn && cached) {
-    extraPosts = dedupePosts(
-      poolTitleSearch(cached, searchQuery).concat(
-        poolCategorySearch(cached, searchQuery)
-      )
-    );
-  }
   return getPooledSearchPage({
     kvStore,
-    query: normQuery,
+    query: normQuery + (threeDOn ? " 3d" : ""),
     page,
     fetchSitePage,
-    extraPosts
+    extraPosts: []
   });
 };
 var getSearchPosts = async function(params) {

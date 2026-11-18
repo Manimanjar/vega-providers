@@ -464,9 +464,80 @@ function build3DContext(opts) {
 }
 
 async function get3DPostsForFilter(ctx, filter, page) {
-  var cached = await ensure3DPool(ctx);
-  if (!cached) return null;
-  return getBucketPosts(cached, filter, page);
+  var baseUrl = ctx.baseUrl;
+  var axios = ctx.axios;
+  var cheerio = ctx.cheerio;
+  var commonHeaders = ctx.commonHeaders;
+  var signal = ctx.signal;
+  var kvStore = ctx.kvStore;
+
+  var pageNum = Math.max(1, page || 1);
+  var pageIndex = pageNum - 1;
+
+  // 1. Homepage in 3D mode:
+  if (filter === "homepage" || !filter) {
+    var homeUrl =
+      baseUrl + "/?k=" + encodeURIComponent("3d animation") + "&sort=length&p=" + pageIndex;
+    return parseVideoGrid({
+      url: homeUrl,
+      baseUrl: baseUrl,
+      axios: axios,
+      cheerio: cheerio,
+      commonHeaders: commonHeaders,
+      signal: signal,
+      kvStore: kvStore,
+    });
+  }
+
+  // 2. Specific category in 3D mode:
+  var category = getCategory(filter);
+  var queries = category && category.xvideosQueries ? category.xvideosQueries : [];
+  if (queries.length === 0) {
+    queries = [filter.replace(/^rel_/, "")];
+  }
+
+  var primaryQuery = String(queries[0]).replace(/\+/g, " ").trim();
+  var targetUrl =
+    baseUrl +
+    "/?k=" +
+    encodeURIComponent(primaryQuery + " 3d") +
+    "&sort=length&p=" +
+    pageIndex;
+
+  var posts = await parseVideoGrid({
+    url: targetUrl,
+    baseUrl: baseUrl,
+    axios: axios,
+    cheerio: cheerio,
+    commonHeaders: commonHeaders,
+    signal: signal,
+    kvStore: kvStore,
+  });
+
+  if (posts && posts.length > 0) {
+    return posts;
+  }
+
+  // If first query returned 0, try second query if available
+  if (queries.length > 1) {
+    var secondQuery = String(queries[1]).replace(/\+/g, " ").trim();
+    return parseVideoGrid({
+      url:
+        baseUrl +
+        "/?k=" +
+        encodeURIComponent(secondQuery + " 3d") +
+        "&sort=length&p=" +
+        pageIndex,
+      baseUrl: baseUrl,
+      axios: axios,
+      cheerio: cheerio,
+      commonHeaders: commonHeaders,
+      signal: signal,
+      kvStore: kvStore,
+    });
+  }
+
+  return [];
 }
 
 const getPostsImpl = async function (params) {
@@ -483,25 +554,18 @@ const getPostsImpl = async function (params) {
   var baseUrl = await getBase(kvStore, axios);
   var category = getCategory(filter);
 
-  // 3D-only mode ("3D content only" toggle in the provider settings):
-  // the same 10 categories, only 3D / animation content inside them.
-  // The pool is swept once and cached for an hour; while the toggle is
-  // OFF the cache is warmed in the background (at most once an hour)
-  // so turning it on feels instant. If the pool is unavailable the
-  // normal feed is served instead — never a black screen.
-  var threeDContext = build3DContext({
+  // 3D-only mode: fast native 3D category routing
+  var threeDContext = {
     baseUrl: baseUrl,
     axios: axios,
     cheerio: cheerio,
     commonHeaders: commonHeaders,
     signal: signal,
     kvStore: kvStore,
-  });
+  };
   if (await is3DOn(kvStore)) {
     var threeDPosts = await get3DPostsForFilter(threeDContext, filter, page);
-    if (threeDPosts) return threeDPosts;
-  } else if (page <= 1) {
-    warm3DInBackground(threeDContext);
+    if (threeDPosts && threeDPosts.length > 0) return threeDPosts;
   }
 
   if (category && category.mode === "keep_existing") {
@@ -677,33 +741,15 @@ const getSearchPostsImpl = async function (params) {
   // scrolling reuses the cached results instead of re-fetching.
   var normQuery = (searchQuery || "").trim().toLowerCase().replace(/\s+/g, " ");
 
-  // 3D-only mode: the verified 3D pool (built once, cached 1h). The
-  // pool is loaded once here and closed over by fetchSitePage.
   var threeDOn = await is3DOn(kvStore);
-  var cached = null;
-  if (threeDOn) {
-    var threeDContext = build3DContext({
-      baseUrl: baseUrl,
-      axios: axios,
-      cheerio: cheerio,
-      commonHeaders: commonHeaders,
-      signal: signal,
-      kvStore: kvStore,
-    });
-    cached = await ensure3DPool(threeDContext);
-  }
 
-  // One site search page (sp is 1-based; XVideos search pages are
-  // 0-indexed in the URL: &p=<sp-1>). In 3D mode the plain page is
-  // intersected with the verified pool and a direct "<query> 3d"
-  // search is added (XVideos keyword search is full-text, so this
-  // finds 3D matches beyond the cached pool). Dedupe + under-2-min
-  // filter, as usual.
+  // One site search page (sp is 1-based; XVideos search pages are 0-indexed: &p=<sp-1>)
   var fetchSitePage = async function (sp) {
     var pageIndex = Math.max(0, sp - 1);
+    var searchStr = threeDOn ? (searchQuery.trim() + " 3d") : searchQuery.trim();
     var targetUrl =
-      baseUrl + "/?k=" + encodeURIComponent(searchQuery) + "&p=" + pageIndex;
-    var plain = await parseVideoGrid({
+      baseUrl + "/?k=" + encodeURIComponent(searchStr) + "&sort=length&p=" + pageIndex;
+    return parseVideoGrid({
       url: targetUrl,
       baseUrl: baseUrl,
       axios: axios,
@@ -712,52 +758,14 @@ const getSearchPostsImpl = async function (params) {
       signal: signal,
       kvStore: kvStore,
     });
-    if (!threeDOn) return plain;
-    var matched = cached
-      ? intersectWithPool(plain, cached)
-      : plain.filter(function (p) {
-          return titleMatchesAnyKeyword(p.title);
-        });
-    var direct = await parseVideoGrid({
-      url:
-        baseUrl +
-        "/?k=" +
-        encodeURIComponent(searchQuery + " 3d") +
-        "&p=" +
-        pageIndex,
-      baseUrl: baseUrl,
-      axios: axios,
-      cheerio: cheerio,
-      commonHeaders: commonHeaders,
-      signal: signal,
-      kvStore: kvStore,
-    });
-    return dedupePosts(keepLongEnough(matched.concat(direct)));
   };
 
-  // 3D pool matches for this query (same on every call; the pool cache
-  // dedupes them to a single copy). Empty in normal mode.
-  var extraPosts = [];
-  if (threeDOn && cached) {
-    extraPosts = dedupePosts(
-      keepLongEnough(
-        poolTitleSearch(cached, searchQuery).concat(
-          poolCategorySearch(cached, searchQuery)
-        )
-      )
-    );
-  }
-
-  // The search pool serves a different 60-video slice per app page, so
-  // scrolling a search keeps showing new videos — never page 1 again.
-  // (Before this, 3D mode sliced the same pooled set to its first 60
-  // on every page: 102 dupes across 3 pages for "sister".)
   return getPooledSearchPage({
     kvStore: kvStore,
-    query: normQuery,
+    query: normQuery + (threeDOn ? " 3d" : ""),
     page: page,
     fetchSitePage: fetchSitePage,
-    extraPosts: extraPosts,
+    extraPosts: [],
   });
 };
 
