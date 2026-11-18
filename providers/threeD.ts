@@ -47,10 +47,14 @@ var THREE_D_WARM_KEY = "threeDWarmV1";
 var THREE_D_TTL_MS = 3600000; // 1 hour, same as the base-URL cache
 var THREE_D_WARM_INTERVAL_MS = 3600000; // warm at most once an hour
 var THREE_D_PAGE_SIZE = 60; // same cap as the normal multi-query merge
-var THREE_D_POOL_CAP = 600; // max videos stored in the cached pool
-var THREE_D_PHASE1_CAP = 300; // Phase 1 (generic keywords) leaves room
-// for the per-category combined-search hits appended by Phase 2.
-var THREE_D_BUCKET_CAP = 120; // max videos per category bucket (2 pages)
+// NO caps (user, 2026-11-18): the 3D pool holds everything the sweep
+// finds, and every category bucket holds every matching video —
+// results run till the last finding, with no prior cap. Storage is
+// chunked (see readChunkedPool/writeChunkedPool), so the kvStore 1 MB
+// per-value limit is not a cap either. The sweep itself only looks at
+// first pages per keyword/term (to stay fast in the background), so
+// the pool's size is bounded by what the sites' top results hold —
+// that is the sites' content, not an artificial cap.
 var THREE_D_WAVE_SIZE = 5; // keywords fetched per wave (XVideos 429s on hammering)
 var THREE_D_WAVE_GAP_MS = 400; // pause between waves
 
@@ -99,6 +103,53 @@ async function kvSetJson(kvStore, key, value) {
   } catch (e) {
     return false;
   }
+}
+
+// CHUNKED POOL STORAGE (user, 2026-11-18: no cap anywhere).
+// The Vega sandbox kvStore caps EACH value at 1 MB, so one pool entry
+// can only hold ~3000 posts. A search or 3D pool with more videos
+// than that could never be stored whole — that was the hidden cap.
+// Chunked storage splits a pool into 500-post chunks (~150 KB each,
+// safely under 1 MB) under <baseKey>:c0, <baseKey>:c1, ... and keeps
+// the small metadata (fetchedPages, page map, buckets, expiry) in the
+// base key itself. There is NO size cap on the pool anymore: it grows
+// until the site genuinely runs out of results. Load reads the meta
+// then every chunk and concatenates; save rewrites the chunks and
+// the meta. A failed write just means the next call re-fetches —
+// never a broken feed.
+var POOL_CHUNK_SIZE = 500;
+
+async function readChunkedPool(kvStore, baseKey) {
+  var meta = await kvGetJson(kvStore, baseKey);
+  if (!meta || typeof meta !== "object") return null;
+  var chunkCount =
+    typeof meta.chunkCount === "number" ? meta.chunkCount : 0;
+  var posts = [];
+  for (var i = 0; i < chunkCount; i++) {
+    var chunk = await kvGetJson(kvStore, baseKey + ":c" + i);
+    if (chunk && Array.isArray(chunk.posts)) {
+      for (var j = 0; j < chunk.posts.length; j++) {
+        posts.push(chunk.posts[j]);
+      }
+    }
+  }
+  return { meta: meta, posts: posts };
+}
+
+async function writeChunkedPool(kvStore, baseKey, posts, meta) {
+  var chunkCount = Math.ceil(posts.length / POOL_CHUNK_SIZE);
+  // Write the new chunks first, then the meta (which carries the
+  // chunk count) — so a reader never sees a meta pointing at chunks
+  // that are not there yet.
+  for (var i = 0; i < chunkCount; i++) {
+    var slice = posts.slice(i * POOL_CHUNK_SIZE, (i + 1) * POOL_CHUNK_SIZE);
+    var ok = await kvSetJson(kvStore, baseKey + ":c" + i, { posts: slice });
+    if (!ok) return false;
+  }
+  var fullMeta = {};
+  for (var k in meta) fullMeta[k] = meta[k];
+  fullMeta.chunkCount = chunkCount;
+  return await kvSetJson(kvStore, baseKey, fullMeta);
 }
 
 // Fetch (or read from cache) the full merged pool for one term-page of a
@@ -233,15 +284,12 @@ export async function getPooledCategoryPage(opts) {
 var SEARCH_POOL_KEY = "searchPoolV1";
 var SEARCH_POOL_TTL_MS = 3600000; // 1 hour
 var SEARCH_POOL_PAGE_SIZE = 60;
-// Pool-size cap, NOT a page cap (user, 2026-11-18): a search must fetch
-// ALL of its pages and dedupe across the full set, not just the first
-// few pages. The old SEARCH_MAX_SITE_PAGES = 10 stopped at ~240 videos,
-// so a search with many pages never showed the rest. Now the pool keeps
-// fetching further site pages as the user scrolls until the site runs
-// out — capped only by pool size, so the stored pool stays inside the
-// kvStore 1MB limit (a post is ~300 bytes JSON; 2000 posts ≈ 600KB).
-// 2000 videos is ~33 app pages of scrolling.
-var SEARCH_MAX_POOL_POSTS = 2000;
+// NO pool-size cap (user, 2026-11-18): a search must show results
+// till the very last finding, with no prior cap. The pool is stored
+// CHUNKED (see readChunkedPool/writeChunkedPool above) so it is not
+// bounded by the kvStore 1 MB per-value limit — it grows until the
+// site genuinely runs out of results. The phone's own memory is not
+// the limit; the old single-entry 1 MB cap was.
 
 // opts: { kvStore, query, page, fetchSitePage, extraPosts }
 // query is the NORMALIZED search string (lowercase, single spaces) and
@@ -259,7 +307,14 @@ export async function getPooledSearchPage(opts) {
   var now = Date.now();
   var key = SEARCH_POOL_KEY + ":" + query;
   try {
-    var cached = await kvGetJson(kvStore, key);
+    // Chunked load: the meta (fetchedPages, page map, ts) lives in
+    // the base key; the posts live in 500-post chunks under it. A
+    // pool saved by the old single-entry format (pre-uncap) has its
+    // posts in the base key itself — readChunkedPool returns an empty
+    // post list for it (chunkCount 0), so treat it as expired and
+    // rebuild from scratch rather than serving a stale short pool.
+    var loaded = await readChunkedPool(kvStore, key);
+    var cached = null;
     var pool = [];
     var fetchedPages = 0;
     // nextStart is the global index where the next FORWARD page must
@@ -272,14 +327,16 @@ export async function getPooledSearchPage(opts) {
     // slice, because that content was already served and is stable.
     var nextStart = 0;
     if (
-      cached &&
-      Array.isArray(cached.posts) &&
-      cached.ts &&
-      now - cached.ts < SEARCH_POOL_TTL_MS
+      loaded &&
+      loaded.meta &&
+      loaded.meta.ts &&
+      now - loaded.meta.ts < SEARCH_POOL_TTL_MS &&
+      Array.isArray(loaded.posts)
     ) {
-      pool = cached.posts;
-      fetchedPages = cached.fetchedPages || 0;
-      nextStart = cached.nextStart || 0;
+      cached = loaded.meta;
+      pool = loaded.posts;
+      fetchedPages = loaded.meta.fetchedPages || 0;
+      nextStart = loaded.meta.nextStart || 0;
     }
     // 3D pool matches go first (verified 3D, most relevant in 3D mode)
     // and are merged on every call — dedupe keeps them to one copy.
@@ -289,24 +346,23 @@ export async function getPooledSearchPage(opts) {
     // Fetch more site pages until the pool covers the requested slice.
     // Site pages arrive in the site's own order and are appended, so
     // the stream order is stable across calls and pages never overlap.
-    // The pool is NOT capped by site pages: it keeps fetching further
-    // site pages as the user scrolls deeper, until the site genuinely
-    // runs out (5 empty pages in a row) or the pool-size cap is hit.
-    // Every video fetched is deduped against the WHOLE pool, so a
-    // video that appears on site page 1 and again on site page 15 is
-    // shown once. A site page can come back empty for a TRANSIENT
-    // reason (XVideos 429 rate-limit, Rule34Video 502) as well as
-    // because the site is genuinely out of results — so an empty page
-    // is RETRIED once (after a short pause, which usually clears a
-    // 429/502) and only then counted as empty, and only 5 empty pages
-    // in a row end the fetch. A single failed page must never strand
-    // the user on a short or empty app page while further site pages
-    // still hold content.
+    // There is NO cap: the pool keeps fetching further site pages as
+    // the user scrolls deeper, until the site genuinely runs out (5
+    // empty pages in a row). Every video fetched is deduped against
+    // the WHOLE pool, so a video that appears on site page 1 and
+    // again on site page 15 is shown once. A site page can come back
+    // empty for a TRANSIENT reason (XVideos 429 rate-limit,
+    // Rule34Video 502) as well as because the site is genuinely out
+    // of results — so an empty page is RETRIED once (after a short
+    // pause, which usually clears a 429/502) and only then counted as
+    // empty, and only 5 empty pages in a row end the fetch. A single
+    // failed page must never strand the user on a short or empty app
+    // page while further site pages still hold content.
     var emptyStreak = 0;
     // The fetch target is the END of the slice we are about to serve
     // (which may be nextStart+60 for a forward page, not page*60).
     var wantEnd = Math.max(page * PAGE, nextStart + PAGE);
-    while (pool.length < wantEnd && pool.length < SEARCH_MAX_POOL_POSTS) {
+    while (pool.length < wantEnd) {
       var sp = fetchedPages + 1;
       var pagePosts = [];
       try {
@@ -373,8 +429,9 @@ export async function getPooledSearchPage(opts) {
         nextStart = start + slice.length;
       }
     }
-    await kvSetJson(kvStore, key, {
-      posts: pool,
+    // Chunked save: posts go into 500-post chunks, the small meta
+    // (fetchedPages, page map, ts) into the base key. No size cap.
+    await writeChunkedPool(kvStore, key, pool, {
       fetchedPages: fetchedPages,
       nextStart: nextStart,
       pageStarts: pageStarts,
@@ -815,9 +872,10 @@ export function keepLongEnough(posts) {
 }
 
 // Sort the pool into the 10 categories. Returns { pool, buckets } where
-// buckets[filter] is an array of pool indices (cap 120 each). Homepage
-// is the whole pool (cap 300); a video matching no category still lives
-// on Homepage, so nothing collected is ever lost.
+// buckets[filter] is an array of pool indices (NO cap — every matching
+// video is kept, user 2026-11-18). Homepage is the whole pool; a video
+// matching no category still lives on Homepage, so nothing collected
+// is ever lost.
 //
 // A bucket has two sources, unioned: (1) title matching against the
 // category's own terms, and (2) categoryHits — the per-category
@@ -842,7 +900,7 @@ export function bucketize(pool, categoryHits) {
       var hits = categoryHits[f] || [];
       for (var h = 0; h < hits.length; h++) {
         var idx = poolKeys[normalizeLink(hits[h].link)];
-        if (idx !== undefined && buckets[f].indexOf(idx) === -1 && buckets[f].length < THREE_D_BUCKET_CAP) {
+        if (idx !== undefined && buckets[f].indexOf(idx) === -1) {
           buckets[f].push(idx);
         }
       }
@@ -855,7 +913,6 @@ export function bucketize(pool, categoryHits) {
       var cat = CATEGORY_TERMS[c];
       if (cat.filter === "homepage") continue;
       if (cat.terms.length === 0) continue;
-      if (buckets[cat.filter].length >= THREE_D_BUCKET_CAP) continue;
       if (buckets[cat.filter].indexOf(p2) !== -1) continue;
       if (titleMatchesTerms(post.title, cat.terms, cat.filter)) {
         buckets[cat.filter].push(p2);
@@ -871,11 +928,21 @@ export function bucketize(pool, categoryHits) {
 export const read3DCache = async function (kvStore) {
   if (!kvStore || typeof kvStore.get !== "function") return null;
   try {
-    var raw = await kvStore.get(THREE_D_CACHE_KEY);
-    var cached = typeof raw === "string" ? JSON.parse(raw) : raw;
-    if (!cached || !cached.pool || !cached.buckets) return null;
-    if (!cached.expiresAt || cached.expiresAt <= Date.now()) return null;
-    return cached;
+    // Chunked read: the pool lives in 500-post chunks under the
+    // cache key; the small meta (expiry + buckets) lives in the key
+    // itself. NO size cap — the pool holds everything the sweep
+    // found (user, 2026-11-18).
+    var loaded = await readChunkedPool(kvStore, THREE_D_CACHE_KEY);
+    if (!loaded || !loaded.meta) return null;
+    if (!loaded.meta.expiresAt || loaded.meta.expiresAt <= Date.now()) {
+      return null;
+    }
+    if (!loaded.meta.buckets) return null;
+    return {
+      expiresAt: loaded.meta.expiresAt,
+      pool: loaded.posts,
+      buckets: loaded.meta.buckets,
+    };
   } catch (e) {
     return null;
   }
@@ -884,16 +951,11 @@ export const read3DCache = async function (kvStore) {
 export const write3DCache = async function (kvStore, pool, buckets) {
   if (!kvStore || typeof kvStore.set !== "function") return false;
   try {
-    var payload = JSON.stringify({
+    // Chunked write: no 1 MB single-entry limit, no pool cap.
+    return await writeChunkedPool(kvStore, THREE_D_CACHE_KEY, pool, {
       expiresAt: Date.now() + THREE_D_TTL_MS,
-      pool: pool,
       buckets: buckets,
     });
-    // 1 MB kvStore cap: the pool is capped at 600 lean posts (~300 KB),
-    // so this should never trigger — but never let a cache write throw.
-    if (payload.length > 900000) return false;
-    await kvStore.set(THREE_D_CACHE_KEY, payload);
-    return true;
   } catch (e) {
     return false;
   }
@@ -921,7 +983,7 @@ export const write3DCache = async function (kvStore, pool, buckets) {
 // 3D clips first and bury them. Hits with no specific relation word
 // land in Incest. Phase 2b runs once per sweep (not once per
 // category) and merges into categoryHits.
-// The Phase 2/2b hits are appended to the pool (cap 400 total) so the
+// The Phase 2/2b hits are appended to the pool (no cap) so the
 // buckets can reference them by index. Returns
 // { pool, categoryHits } where categoryHits[filter] is the list of
 // pool posts that belong to that category.
@@ -950,7 +1012,8 @@ export const sweep3D = async function (fetchGrid, fetchCategory3D, fetchRelation
   }
   pool = dedupePosts(pool);
   pool = keepLongEnough(pool);
-  pool = pool.slice(0, THREE_D_PHASE1_CAP).map(leanPost);
+  // NO Phase 1 cap: keep every video the keyword searches found.
+  pool = pool.map(leanPost);
   var categoryHits = {};
   if (typeof fetchCategory3D === "function" && pool.length > 0) {
     var filters = [];
@@ -1001,8 +1064,9 @@ export const sweep3D = async function (fetchGrid, fetchCategory3D, fetchRelation
     // old code appended category by category in config order, so when
     // the pool filled up the later categories (Brother, Mom, ...)
     // lost their hits entirely while Family/Incest/Sister kept
-    // everything. Round-robin gives every category a fair share of
-    // the remaining slots, so no category is silently starved.
+    // everything. Round-robin gives every category a fair share, so
+    // no category is silently starved. NO pool cap: every hit found
+    // is kept (user, 2026-11-18).
     var poolKeys = {};
     for (var p = 0; p < pool.length; p++) poolKeys[normalizeLink(pool[p].link)] = true;
     var hitLists = [];
@@ -1019,8 +1083,8 @@ export const sweep3D = async function (fetchGrid, fetchCategory3D, fetchRelation
     }
     var maxHits = 0;
     for (var hl = 0; hl < hitLists.length; hl++) maxHits = Math.max(maxHits, hitLists[hl].length);
-    for (var hi = 0; hi < maxHits && pool.length < THREE_D_POOL_CAP; hi++) {
-      for (var hj = 0; hj < hitLists.length && pool.length < THREE_D_POOL_CAP; hj++) {
+    for (var hi = 0; hi < maxHits; hi++) {
+      for (var hj = 0; hj < hitLists.length; hj++) {
         var hit = hitLists[hj][hi];
         if (!hit) continue;
         var key = normalizeLink(hit.link);
