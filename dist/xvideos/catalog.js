@@ -37,9 +37,17 @@ var categories_config_default = {
     {
       filter: "family",
       mode: "keep_existing",
-      rule34Tags: [],
+      rule34Tags: [
+        "family",
+        "stepfamily",
+        "step_family"
+      ],
       title: "Family",
-      xvideosQueries: []
+      xvideosQueries: [
+        "family",
+        "stepfamily",
+        "step+family"
+      ]
     },
     {
       filter: "incest",
