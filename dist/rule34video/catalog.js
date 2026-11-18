@@ -169,7 +169,8 @@ var categories_config_default = {
         "moms",
         "mothers",
         "stepmoms",
-        "stepmothers"
+        "stepmothers",
+        "maa"
       ]
     },
     {
@@ -220,7 +221,8 @@ var categories_config_default = {
         "step_father",
         "father-in-law",
         "fathers",
-        "stepfathers"
+        "stepfathers",
+        "papa"
       ],
       title: "Father",
       xvideosQueries: [
@@ -234,7 +236,9 @@ var categories_config_default = {
         "step+father",
         "father+in+law",
         "fathers",
-        "stepfathers"
+        "stepfathers",
+        "papa",
+        "paa"
       ]
     },
     {

@@ -142,7 +142,8 @@
         "moms",
         "mothers",
         "stepmoms",
-        "stepmothers"
+        "stepmothers",
+        "maa"
       ]
     },
     {
@@ -193,7 +194,8 @@
         "step_father",
         "father-in-law",
         "fathers",
-        "stepfathers"
+        "stepfathers",
+        "papa"
       ],
       "title": "Father",
       "xvideosQueries": [
@@ -207,7 +209,9 @@
         "step+father",
         "father+in+law",
         "fathers",
-        "stepfathers"
+        "stepfathers",
+        "papa",
+        "paa"
       ]
     },
     {
