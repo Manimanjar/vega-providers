@@ -490,6 +490,97 @@ async function getPooledCategoryPage(opts) {
     return fallback.slice(0, PAGE);
   }
 }
+var SEARCH_POOL_KEY = "searchPoolV1";
+var SEARCH_POOL_TTL_MS = 36e5;
+var SEARCH_POOL_PAGE_SIZE = 60;
+var SEARCH_MAX_SITE_PAGES = 10;
+async function getPooledSearchPage(opts) {
+  var kvStore = opts.kvStore;
+  var query = opts.query || "";
+  var page = Math.max(1, opts.page || 1);
+  var fetchSitePage = opts.fetchSitePage;
+  var extraPosts = opts.extraPosts || [];
+  var PAGE = SEARCH_POOL_PAGE_SIZE;
+  var now = Date.now();
+  var key = SEARCH_POOL_KEY + ":" + query;
+  try {
+    var cached = await kvGetJson(kvStore, key);
+    var pool = [];
+    var fetchedPages = 0;
+    var nextStart = 0;
+    if (cached && Array.isArray(cached.posts) && cached.ts && now - cached.ts < SEARCH_POOL_TTL_MS) {
+      pool = cached.posts;
+      fetchedPages = cached.fetchedPages || 0;
+      nextStart = cached.nextStart || 0;
+    }
+    if (extraPosts.length > 0) {
+      pool = dedupePosts(extraPosts.concat(pool));
+    }
+    var emptyStreak = 0;
+    var wantEnd = Math.max(page * PAGE, nextStart + PAGE);
+    while (pool.length < wantEnd && fetchedPages < SEARCH_MAX_SITE_PAGES) {
+      var sp = fetchedPages + 1;
+      var pagePosts = [];
+      try {
+        pagePosts = await fetchSitePage(sp) || [];
+      } catch (e) {
+        pagePosts = [];
+      }
+      if (pagePosts.length === 0) {
+        try {
+          await new Promise(function(r) {
+            setTimeout(r, 1200);
+          });
+          pagePosts = await fetchSitePage(sp) || [];
+        } catch (e) {
+          pagePosts = [];
+        }
+      }
+      fetchedPages = sp;
+      if (pagePosts.length === 0) {
+        emptyStreak++;
+        if (emptyStreak >= 5) break;
+        continue;
+      }
+      emptyStreak = 0;
+      var before = pool.length;
+      pool = dedupePosts(pool.concat(pagePosts));
+      if (pool.length === before) break;
+    }
+    var pageStarts = cached && cached.pageStarts ? cached.pageStarts : {};
+    var pageEnds = cached && cached.pageEnds ? cached.pageEnds : {};
+    var isFirstServe = pageStarts[page] === void 0 || pageStarts[page] === null;
+    var start;
+    var end;
+    if (isFirstServe) {
+      start = nextStart;
+      end = start + PAGE;
+      pageStarts[page] = start;
+    } else {
+      start = pageStarts[page];
+      end = pageEnds[page] !== void 0 && pageEnds[page] !== null ? pageEnds[page] : start + PAGE;
+    }
+    var slice = pool.slice(start, end);
+    if (isFirstServe && slice.length > 0) {
+      pageEnds[page] = start + slice.length;
+      if (start + slice.length > nextStart) {
+        nextStart = start + slice.length;
+      }
+    }
+    await kvSetJson(kvStore, key, {
+      posts: pool,
+      fetchedPages,
+      nextStart,
+      pageStarts,
+      pageEnds,
+      ts: now
+    });
+    return slice;
+  } catch (e) {
+    var fallback = await fetchSitePage(page) || [];
+    return fallback.slice(0, PAGE);
+  }
+}
 var THREE_D_KEYWORDS = [
   { kw: "3d", tier: 1 },
   { kw: "cgi", tier: 1 },
@@ -1771,9 +1862,10 @@ var getSearchPostsImpl = async function(params) {
   var commonHeaders = providerContext.commonHeaders;
   var kvStore = providerContext.kvStore;
   var baseUrl = await getBase(kvStore, axios);
-  var pageIndex = Math.max(0, page - 1);
-  var targetUrl = baseUrl + "/?k=" + encodeURIComponent(searchQuery) + "&p=" + pageIndex;
-  if (await is3DOn(kvStore)) {
+  var normQuery = (searchQuery || "").trim().toLowerCase().replace(/\s+/g, " ");
+  var threeDOn = await is3DOn(kvStore);
+  var cached = null;
+  if (threeDOn) {
     var threeDContext = build3DContext({
       baseUrl,
       axios,
@@ -1782,7 +1874,11 @@ var getSearchPostsImpl = async function(params) {
       signal,
       kvStore
     });
-    var cached = await ensure3DPool(threeDContext);
+    cached = await ensure3DPool(threeDContext);
+  }
+  var fetchSitePage = async function(sp) {
+    var pageIndex = Math.max(0, sp - 1);
+    var targetUrl = baseUrl + "/?k=" + encodeURIComponent(searchQuery) + "&p=" + pageIndex;
     var plain = await parseVideoGrid({
       url: targetUrl,
       baseUrl,
@@ -1792,6 +1888,7 @@ var getSearchPostsImpl = async function(params) {
       signal,
       kvStore
     });
+    if (!threeDOn) return plain;
     var matched = cached ? intersectWithPool(plain, cached) : plain.filter(function(p) {
       return titleMatchesAnyKeyword(p.title);
     });
@@ -1804,28 +1901,24 @@ var getSearchPostsImpl = async function(params) {
       signal,
       kvStore
     });
-    var merged = dedupePosts(
+    return dedupePosts(keepLongEnough(matched.concat(direct)));
+  };
+  var extraPosts = [];
+  if (threeDOn && cached) {
+    extraPosts = dedupePosts(
       keepLongEnough(
-        matched.concat(
-          direct,
-          cached ? poolTitleSearch(cached, searchQuery) : [],
-          cached ? poolCategorySearch(cached, searchQuery) : []
+        poolTitleSearch(cached, searchQuery).concat(
+          poolCategorySearch(cached, searchQuery)
         )
       )
     );
-    merged.sort(function(a, b) {
-      return compareTitle(a.title || "", b.title || "");
-    });
-    return merged.slice(0, 60);
   }
-  return parseVideoGrid({
-    url: targetUrl,
-    baseUrl,
-    axios,
-    cheerio,
-    commonHeaders,
-    signal,
-    kvStore
+  return getPooledSearchPage({
+    kvStore,
+    query: normQuery,
+    page,
+    fetchSitePage,
+    extraPosts
   });
 };
 var getSearchPosts = async function(params) {

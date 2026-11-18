@@ -14,6 +14,7 @@ import {
   dedupePosts,
   keepLongEnough,
   getPooledCategoryPage,
+  getPooledSearchPage,
 } from "../threeD";
 import { groupSeriesPosts } from "../series";
 
@@ -932,17 +933,18 @@ const getSearchPostsImpl = async function (params) {
   var kvStore = providerContext.kvStore;
 
   var baseUrl = await getBase(kvStore, axios);
+  // Normalized query is the pool's key: same search = same pool, so
+  // scrolling reuses the cached results instead of re-fetching.
+  var normQuery = (searchQuery || "").trim().toLowerCase().replace(/\s+/g, " ");
   var cleanQuery = encodeURIComponent(searchQuery.trim().replace(/\s+/g, "-"));
-  var targetUrl =
-    page > 1
-      ? baseUrl + "/search/" + cleanQuery + "/" + page + "/"
-      : baseUrl + "/search/" + cleanQuery + "/";
 
-  // 3D-only mode: keep the query's results that are also in the verified
-  // 3D pool. (A combined "/search/<query>-3d/" does NOT narrow on this
-  // site — verified live 2026-11-18: it returns the same videos as the
-  // plain query — so the pool intersection is the only exact filter.)
-  if (await is3DOn(kvStore)) {
+  // 3D-only mode: the verified 3D pool (built once, cached 1h). A
+  // combined "/search/<query>-3d/" does NOT narrow on this site —
+  // verified live 2026-11-18: it returns the same videos as the plain
+  // query — so the pool intersection is the only exact filter.
+  var threeDOn = await is3DOn(kvStore);
+  var cached = null;
+  if (threeDOn) {
     var threeDContext = build3DContext({
       baseUrl: baseUrl,
       axios: axios,
@@ -951,7 +953,17 @@ const getSearchPostsImpl = async function (params) {
       signal: signal,
       kvStore: kvStore,
     });
-    var cached = await ensure3DPool(threeDContext);
+    cached = await ensure3DPool(threeDContext);
+  }
+
+  // One site search page (sp is 1-based). In 3D mode the page is
+  // intersected with the verified pool; without a pool, title keywords
+  // are the fallback filter.
+  var fetchSitePage = async function (sp) {
+    var targetUrl =
+      sp > 1
+        ? baseUrl + "/search/" + cleanQuery + "/" + sp + "/"
+        : baseUrl + "/search/" + cleanQuery + "/";
     var plain = await parseVideoGrid({
       url: targetUrl,
       baseUrl: baseUrl,
@@ -962,28 +974,34 @@ const getSearchPostsImpl = async function (params) {
       kvStore: kvStore,
       requireVideo: true,
     });
-    if (cached) {
-      var fromQuery = intersectWithPool(plain, cached);
-      var fromPool = poolTitleSearch(cached, searchQuery);
-      var fromCategory = poolCategorySearch(cached, searchQuery);
-      return dedupePosts(fromQuery.concat(fromPool, fromCategory)).slice(0, 60);
-    }
-    return plain
-      .filter(function (p) {
-        return titleMatchesAnyKeyword(p.title);
-      })
-      .slice(0, 60);
+    if (!threeDOn) return plain;
+    if (cached) return intersectWithPool(plain, cached);
+    return plain.filter(function (p) {
+      return titleMatchesAnyKeyword(p.title);
+    });
+  };
+
+  // 3D pool matches for this query (same on every call; the pool cache
+  // dedupes them to a single copy). Empty in normal mode.
+  var extraPosts = [];
+  if (threeDOn && cached) {
+    extraPosts = dedupePosts(
+      poolTitleSearch(cached, searchQuery).concat(
+        poolCategorySearch(cached, searchQuery)
+      )
+    );
   }
 
-  return parseVideoGrid({
-    url: targetUrl,
-    baseUrl: baseUrl,
-    axios: axios,
-    cheerio: cheerio,
-    commonHeaders: commonHeaders,
-    signal: signal,
+  // The search pool serves a different 60-video slice per app page, so
+  // scrolling a search keeps showing new videos — never page 1 again.
+  // (Before this, 3D mode sliced the same pooled set to its first 60
+  // on every page: only 37 unique videos across 3 pages for "sister".)
+  return getPooledSearchPage({
     kvStore: kvStore,
-    requireVideo: true,
+    query: normQuery,
+    page: page,
+    fetchSitePage: fetchSitePage,
+    extraPosts: extraPosts,
   });
 };
 

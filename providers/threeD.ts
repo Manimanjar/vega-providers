@@ -210,6 +210,173 @@ export async function getPooledCategoryPage(opts) {
   }
 }
 
+// ---- Search pool cache (user, 2026-11-18: "only page 1 search results
+// are shown") ----
+// ROOT CAUSE (proven live 2026-11-18): in 3D mode, getSearchPosts built
+// its result from poolTitleSearch + poolCategorySearch, which return the
+// SAME full set of matching pool videos on every app page, then sliced
+// it to the first 60 — so app pages 1, 2 and 3 were the same videos
+// (XVideos "sister": 174 posts across 3 pages but only 72 unique, 102
+// dupes; Rule34Video "sister": 111 posts but only 37 unique, 74 dupes).
+// The user scrolled and kept seeing page 1 again.
+// FIX: a search is now a POOL, like the category pool above. One kvStore
+// entry per normalized query holds every video fetched so far (3D pool
+// matches first, then site search pages in the site's own order,
+// deduped), and each app page serves a different 60-video slice of it.
+// Site pages are fetched LAZILY — only as many as the requested slice
+// needs — so a search for a rare keyword stays fast, and scrolling
+// deeper keeps fetching further site pages until the cap (10 site pages,
+// ~240 videos) or the site runs out. Nothing is ever shown twice, and
+// every site page is eventually reachable. kvStore trouble falls back to
+// the old behaviour (just the requested site page) instead of breaking
+// the search.
+var SEARCH_POOL_KEY = "searchPoolV1";
+var SEARCH_POOL_TTL_MS = 3600000; // 1 hour
+var SEARCH_POOL_PAGE_SIZE = 60;
+var SEARCH_MAX_SITE_PAGES = 10;
+
+// opts: { kvStore, query, page, fetchSitePage, extraPosts }
+// query is the NORMALIZED search string (lowercase, single spaces) and
+// is the pool's key. fetchSitePage(sp) returns the parsed posts for
+// site search page sp (1-based), already filtered for the current mode
+// (3D intersection included). extraPosts are the 3D pool matches for
+// the query (same on every call); [] in normal mode.
+export async function getPooledSearchPage(opts) {
+  var kvStore = opts.kvStore;
+  var query = opts.query || "";
+  var page = Math.max(1, opts.page || 1);
+  var fetchSitePage = opts.fetchSitePage;
+  var extraPosts = opts.extraPosts || [];
+  var PAGE = SEARCH_POOL_PAGE_SIZE;
+  var now = Date.now();
+  var key = SEARCH_POOL_KEY + ":" + query;
+  try {
+    var cached = await kvGetJson(kvStore, key);
+    var pool = [];
+    var fetchedPages = 0;
+    // nextStart is the global index where the next FORWARD page must
+    // begin. It is what makes the slices gap-proof: if an early page
+    // was served short (the pool was thin because a site page 502'd),
+    // the next forward page starts where the last one ENDED, not at
+    // its fixed (page-1)*60 index — otherwise the videos between the
+    // short slice's end and the fixed index would never be shown.
+    // Backward requests (re-opening an earlier page) use their fixed
+    // slice, because that content was already served and is stable.
+    var nextStart = 0;
+    if (
+      cached &&
+      Array.isArray(cached.posts) &&
+      cached.ts &&
+      now - cached.ts < SEARCH_POOL_TTL_MS
+    ) {
+      pool = cached.posts;
+      fetchedPages = cached.fetchedPages || 0;
+      nextStart = cached.nextStart || 0;
+    }
+    // 3D pool matches go first (verified 3D, most relevant in 3D mode)
+    // and are merged on every call — dedupe keeps them to one copy.
+    if (extraPosts.length > 0) {
+      pool = dedupePosts(extraPosts.concat(pool));
+    }
+    // Fetch more site pages until the pool covers the requested slice.
+    // Site pages arrive in the site's own order and are appended, so
+    // the stream order is stable across calls and pages never overlap.
+    // A site page can come back empty for a TRANSIENT reason (XVideos
+    // 429 rate-limit, Rule34Video 502) as well as because the site is
+    // genuinely out of results — so an empty page is RETRIED once
+    // (after a short pause, which usually clears a 429/502) and only
+    // then counted as empty, and only 5 empty pages in a row end the
+    // fetch. A single failed page must never strand the user on a
+    // short or empty app page while further site pages still hold
+    // content.
+    var emptyStreak = 0;
+    // The fetch target is the END of the slice we are about to serve
+    // (which may be nextStart+60 for a forward page, not page*60).
+    var wantEnd = Math.max(page * PAGE, nextStart + PAGE);
+    while (pool.length < wantEnd && fetchedPages < SEARCH_MAX_SITE_PAGES) {
+      var sp = fetchedPages + 1;
+      var pagePosts = [];
+      try {
+        pagePosts = (await fetchSitePage(sp)) || [];
+      } catch (e) {
+        pagePosts = [];
+      }
+      if (pagePosts.length === 0) {
+        // One retry after a pause: a 429/502 is usually gone by then.
+        try {
+          await new Promise(function (r) {
+            setTimeout(r, 1200);
+          });
+          pagePosts = (await fetchSitePage(sp)) || [];
+        } catch (e) {
+          pagePosts = [];
+        }
+      }
+      fetchedPages = sp;
+      if (pagePosts.length === 0) {
+        emptyStreak++;
+        if (emptyStreak >= 5) break;
+        continue;
+      }
+      emptyStreak = 0;
+      var before = pool.length;
+      pool = dedupePosts(pool.concat(pagePosts));
+      // Nothing new: the site is repeating itself (or every video on
+      // the page was already in the pool) — stop instead of looping.
+      if (pool.length === before) break;
+    }
+    // Serve the slice. pageStarts/pageEnds record the exact global
+    // range each app page served, so re-opening a page returns the
+    // SAME videos it showed the first time — even if the pool has
+    // grown since (a re-request must not suddenly serve 60 videos
+    // when it first served 30, or those extra videos would duplicate
+    // the next page). A page served for the first time starts at
+    // nextStart — the end of the last forward slice — so a short early
+    // page can never strand videos in a gap: the next page continues
+    // exactly where the last one ended instead of jumping to its
+    // fixed (page-1)*60 index.
+    var pageStarts = cached && cached.pageStarts ? cached.pageStarts : {};
+    var pageEnds = cached && cached.pageEnds ? cached.pageEnds : {};
+    var isFirstServe =
+      pageStarts[page] === undefined || pageStarts[page] === null;
+    var start;
+    var end;
+    if (isFirstServe) {
+      start = nextStart;
+      end = start + PAGE;
+      pageStarts[page] = start;
+    } else {
+      start = pageStarts[page];
+      end = pageEnds[page] !== undefined && pageEnds[page] !== null
+        ? pageEnds[page]
+        : start + PAGE;
+    }
+    var slice = pool.slice(start, end);
+    // Only a first serve advances nextStart and records its end; a
+    // re-request must not move either, or later pages would shift.
+    if (isFirstServe && slice.length > 0) {
+      pageEnds[page] = start + slice.length;
+      if (start + slice.length > nextStart) {
+        nextStart = start + slice.length;
+      }
+    }
+    await kvSetJson(kvStore, key, {
+      posts: pool,
+      fetchedPages: fetchedPages,
+      nextStart: nextStart,
+      pageStarts: pageStarts,
+      pageEnds: pageEnds,
+      ts: now,
+    });
+    return slice;
+  } catch (e) {
+    // kvStore trouble: fall back to the old behaviour (just the
+    // requested site page) rather than breaking the search.
+    var fallback = (await fetchSitePage(page)) || [];
+    return fallback.slice(0, PAGE);
+  }
+}
+
 // Every keyword the user named is kept — nothing is skipped. Tier 1 is
 // what these sites actually tag 3D content with; Tier 2 is the user's
 // own words; Tier 3 is animation/cartoon, because on adult sites 3D

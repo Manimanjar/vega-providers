@@ -14,6 +14,7 @@ import {
   dedupePosts,
   keepLongEnough,
   getPooledCategoryPage,
+  getPooledSearchPage,
 } from "../threeD";
 import { groupSeriesPosts } from "../series";
 
@@ -672,14 +673,15 @@ const getSearchPostsImpl = async function (params) {
   var kvStore = providerContext.kvStore;
 
   var baseUrl = await getBase(kvStore, axios);
-  var pageIndex = Math.max(0, page - 1);
-  var targetUrl = baseUrl + "/?k=" + encodeURIComponent(searchQuery) + "&p=" + pageIndex;
+  // Normalized query is the pool's key: same search = same pool, so
+  // scrolling reuses the cached results instead of re-fetching.
+  var normQuery = (searchQuery || "").trim().toLowerCase().replace(/\s+/g, " ");
 
-  // 3D-only mode: keep the query's results that are also in the
-  // verified 3D pool, plus a direct "<query> 3d" search (XVideos
-  // keyword search is full-text, so this finds 3D matches beyond the
-  // cached pool). Dedupe + under-2-min filter + cap 60, as usual.
-  if (await is3DOn(kvStore)) {
+  // 3D-only mode: the verified 3D pool (built once, cached 1h). The
+  // pool is loaded once here and closed over by fetchSitePage.
+  var threeDOn = await is3DOn(kvStore);
+  var cached = null;
+  if (threeDOn) {
     var threeDContext = build3DContext({
       baseUrl: baseUrl,
       axios: axios,
@@ -688,7 +690,19 @@ const getSearchPostsImpl = async function (params) {
       signal: signal,
       kvStore: kvStore,
     });
-    var cached = await ensure3DPool(threeDContext);
+    cached = await ensure3DPool(threeDContext);
+  }
+
+  // One site search page (sp is 1-based; XVideos search pages are
+  // 0-indexed in the URL: &p=<sp-1>). In 3D mode the plain page is
+  // intersected with the verified pool and a direct "<query> 3d"
+  // search is added (XVideos keyword search is full-text, so this
+  // finds 3D matches beyond the cached pool). Dedupe + under-2-min
+  // filter, as usual.
+  var fetchSitePage = async function (sp) {
+    var pageIndex = Math.max(0, sp - 1);
+    var targetUrl =
+      baseUrl + "/?k=" + encodeURIComponent(searchQuery) + "&p=" + pageIndex;
     var plain = await parseVideoGrid({
       url: targetUrl,
       baseUrl: baseUrl,
@@ -698,13 +712,19 @@ const getSearchPostsImpl = async function (params) {
       signal: signal,
       kvStore: kvStore,
     });
+    if (!threeDOn) return plain;
     var matched = cached
       ? intersectWithPool(plain, cached)
       : plain.filter(function (p) {
           return titleMatchesAnyKeyword(p.title);
         });
     var direct = await parseVideoGrid({
-      url: baseUrl + "/?k=" + encodeURIComponent(searchQuery + " 3d") + "&p=" + pageIndex,
+      url:
+        baseUrl +
+        "/?k=" +
+        encodeURIComponent(searchQuery + " 3d") +
+        "&p=" +
+        pageIndex,
       baseUrl: baseUrl,
       axios: axios,
       cheerio: cheerio,
@@ -712,29 +732,32 @@ const getSearchPostsImpl = async function (params) {
       signal: signal,
       kvStore: kvStore,
     });
-    var merged = dedupePosts(
+    return dedupePosts(keepLongEnough(matched.concat(direct)));
+  };
+
+  // 3D pool matches for this query (same on every call; the pool cache
+  // dedupes them to a single copy). Empty in normal mode.
+  var extraPosts = [];
+  if (threeDOn && cached) {
+    extraPosts = dedupePosts(
       keepLongEnough(
-        matched.concat(
-          direct,
-          cached ? poolTitleSearch(cached, searchQuery) : [],
-          cached ? poolCategorySearch(cached, searchQuery) : []
+        poolTitleSearch(cached, searchQuery).concat(
+          poolCategorySearch(cached, searchQuery)
         )
       )
     );
-    merged.sort(function (a, b) {
-      return compareTitle(a.title || "", b.title || "");
-    });
-    return merged.slice(0, 60);
   }
 
-  return parseVideoGrid({
-    url: targetUrl,
-    baseUrl: baseUrl,
-    axios: axios,
-    cheerio: cheerio,
-    commonHeaders: commonHeaders,
-    signal: signal,
+  // The search pool serves a different 60-video slice per app page, so
+  // scrolling a search keeps showing new videos — never page 1 again.
+  // (Before this, 3D mode sliced the same pooled set to its first 60
+  // on every page: 102 dupes across 3 pages for "sister".)
+  return getPooledSearchPage({
     kvStore: kvStore,
+    query: normQuery,
+    page: page,
+    fetchSitePage: fetchSitePage,
+    extraPosts: extraPosts,
   });
 };
 
