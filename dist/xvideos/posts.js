@@ -378,9 +378,6 @@ var THREE_D_WARM_KEY = "threeDWarmV1";
 var THREE_D_TTL_MS = 36e5;
 var THREE_D_WARM_INTERVAL_MS = 36e5;
 var THREE_D_PAGE_SIZE = 60;
-var THREE_D_POOL_CAP = 600;
-var THREE_D_PHASE1_CAP = 300;
-var THREE_D_BUCKET_CAP = 120;
 var THREE_D_WAVE_SIZE = 5;
 var THREE_D_WAVE_GAP_MS = 400;
 var CAT_POOL_META_KEY = "catPoolMetaV1";
@@ -406,6 +403,34 @@ async function kvSetJson(kvStore, key, value) {
   } catch (e) {
     return false;
   }
+}
+var POOL_CHUNK_SIZE = 500;
+async function readChunkedPool(kvStore, baseKey) {
+  var meta = await kvGetJson(kvStore, baseKey);
+  if (!meta || typeof meta !== "object") return null;
+  var chunkCount = typeof meta.chunkCount === "number" ? meta.chunkCount : 0;
+  var posts = [];
+  for (var i = 0; i < chunkCount; i++) {
+    var chunk = await kvGetJson(kvStore, baseKey + ":c" + i);
+    if (chunk && Array.isArray(chunk.posts)) {
+      for (var j = 0; j < chunk.posts.length; j++) {
+        posts.push(chunk.posts[j]);
+      }
+    }
+  }
+  return { meta, posts };
+}
+async function writeChunkedPool(kvStore, baseKey, posts, meta) {
+  var chunkCount = Math.ceil(posts.length / POOL_CHUNK_SIZE);
+  for (var i = 0; i < chunkCount; i++) {
+    var slice = posts.slice(i * POOL_CHUNK_SIZE, (i + 1) * POOL_CHUNK_SIZE);
+    var ok = await kvSetJson(kvStore, baseKey + ":c" + i, { posts: slice });
+    if (!ok) return false;
+  }
+  var fullMeta = {};
+  for (var k in meta) fullMeta[k] = meta[k];
+  fullMeta.chunkCount = chunkCount;
+  return await kvSetJson(kvStore, baseKey, fullMeta);
 }
 async function getPoolForTermPage(kvStore, filter, tp, fetchTermPage) {
   var now = Date.now();
@@ -493,7 +518,6 @@ async function getPooledCategoryPage(opts) {
 var SEARCH_POOL_KEY = "searchPoolV1";
 var SEARCH_POOL_TTL_MS = 36e5;
 var SEARCH_POOL_PAGE_SIZE = 60;
-var SEARCH_MAX_POOL_POSTS = 2e3;
 async function getPooledSearchPage(opts) {
   var kvStore = opts.kvStore;
   var query = opts.query || "";
@@ -504,21 +528,23 @@ async function getPooledSearchPage(opts) {
   var now = Date.now();
   var key = SEARCH_POOL_KEY + ":" + query;
   try {
-    var cached = await kvGetJson(kvStore, key);
+    var loaded = await readChunkedPool(kvStore, key);
+    var cached = null;
     var pool = [];
     var fetchedPages = 0;
     var nextStart = 0;
-    if (cached && Array.isArray(cached.posts) && cached.ts && now - cached.ts < SEARCH_POOL_TTL_MS) {
-      pool = cached.posts;
-      fetchedPages = cached.fetchedPages || 0;
-      nextStart = cached.nextStart || 0;
+    if (loaded && loaded.meta && loaded.meta.ts && now - loaded.meta.ts < SEARCH_POOL_TTL_MS && Array.isArray(loaded.posts)) {
+      cached = loaded.meta;
+      pool = loaded.posts;
+      fetchedPages = loaded.meta.fetchedPages || 0;
+      nextStart = loaded.meta.nextStart || 0;
     }
     if (extraPosts.length > 0) {
       pool = dedupePosts(extraPosts.concat(pool));
     }
     var emptyStreak = 0;
     var wantEnd = Math.max(page * PAGE, nextStart + PAGE);
-    while (pool.length < wantEnd && pool.length < SEARCH_MAX_POOL_POSTS) {
+    while (pool.length < wantEnd) {
       var sp = fetchedPages + 1;
       var pagePosts = [];
       try {
@@ -567,8 +593,7 @@ async function getPooledSearchPage(opts) {
         nextStart = start + slice.length;
       }
     }
-    await kvSetJson(kvStore, key, {
-      posts: pool,
+    await writeChunkedPool(kvStore, key, pool, {
       fetchedPages,
       nextStart,
       pageStarts,
@@ -888,7 +913,7 @@ function bucketize(pool, categoryHits) {
       var hits = categoryHits[f] || [];
       for (var h = 0; h < hits.length; h++) {
         var idx = poolKeys[normalizeLink(hits[h].link)];
-        if (idx !== void 0 && buckets[f].indexOf(idx) === -1 && buckets[f].length < THREE_D_BUCKET_CAP) {
+        if (idx !== void 0 && buckets[f].indexOf(idx) === -1) {
           buckets[f].push(idx);
         }
       }
@@ -900,7 +925,6 @@ function bucketize(pool, categoryHits) {
       var cat = CATEGORY_TERMS[c];
       if (cat.filter === "homepage") continue;
       if (cat.terms.length === 0) continue;
-      if (buckets[cat.filter].length >= THREE_D_BUCKET_CAP) continue;
       if (buckets[cat.filter].indexOf(p2) !== -1) continue;
       if (titleMatchesTerms(post.title, cat.terms, cat.filter)) {
         buckets[cat.filter].push(p2);
@@ -915,11 +939,17 @@ function bucketize(pool, categoryHits) {
 var read3DCache = async function(kvStore) {
   if (!kvStore || typeof kvStore.get !== "function") return null;
   try {
-    var raw = await kvStore.get(THREE_D_CACHE_KEY);
-    var cached = typeof raw === "string" ? JSON.parse(raw) : raw;
-    if (!cached || !cached.pool || !cached.buckets) return null;
-    if (!cached.expiresAt || cached.expiresAt <= Date.now()) return null;
-    return cached;
+    var loaded = await readChunkedPool(kvStore, THREE_D_CACHE_KEY);
+    if (!loaded || !loaded.meta) return null;
+    if (!loaded.meta.expiresAt || loaded.meta.expiresAt <= Date.now()) {
+      return null;
+    }
+    if (!loaded.meta.buckets) return null;
+    return {
+      expiresAt: loaded.meta.expiresAt,
+      pool: loaded.posts,
+      buckets: loaded.meta.buckets
+    };
   } catch (e) {
     return null;
   }
@@ -927,14 +957,10 @@ var read3DCache = async function(kvStore) {
 var write3DCache = async function(kvStore, pool, buckets) {
   if (!kvStore || typeof kvStore.set !== "function") return false;
   try {
-    var payload = JSON.stringify({
+    return await writeChunkedPool(kvStore, THREE_D_CACHE_KEY, pool, {
       expiresAt: Date.now() + THREE_D_TTL_MS,
-      pool,
       buckets
     });
-    if (payload.length > 9e5) return false;
-    await kvStore.set(THREE_D_CACHE_KEY, payload);
-    return true;
   } catch (e) {
     return false;
   }
@@ -962,7 +988,7 @@ var sweep3D = async function(fetchGrid, fetchCategory3D, fetchRelationPool) {
   }
   pool = dedupePosts(pool);
   pool = keepLongEnough(pool);
-  pool = pool.slice(0, THREE_D_PHASE1_CAP).map(leanPost);
+  pool = pool.map(leanPost);
   var categoryHits = {};
   if (typeof fetchCategory3D === "function" && pool.length > 0) {
     var filters = [];
@@ -1017,8 +1043,8 @@ var sweep3D = async function(fetchGrid, fetchCategory3D, fetchRelationPool) {
     }
     var maxHits = 0;
     for (var hl = 0; hl < hitLists.length; hl++) maxHits = Math.max(maxHits, hitLists[hl].length);
-    for (var hi = 0; hi < maxHits && pool.length < THREE_D_POOL_CAP; hi++) {
-      for (var hj = 0; hj < hitLists.length && pool.length < THREE_D_POOL_CAP; hj++) {
+    for (var hi = 0; hi < maxHits; hi++) {
+      for (var hj = 0; hj < hitLists.length; hj++) {
         var hit = hitLists[hj][hi];
         if (!hit) continue;
         var key = normalizeLink(hit.link);
