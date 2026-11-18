@@ -13,6 +13,8 @@ import {
   titleMatchesAnyKeyword,
   dedupePosts,
   keepLongEnough,
+  getPooledCategoryPage,
+  getPooledSearchPage,
 } from "../threeD";
 import { groupSeriesPosts } from "../series";
 
@@ -674,13 +676,16 @@ function build3DContext(opts) {
 // it is shared across all of them, so it cannot confirm one.
 const R34_CATEGORY_WORDS = {
   family: ["family", "families", "stepfamily", "stepfamilies", "incest"],
-  incest: ["incest", "family", "families", "stepfamily", "stepfamilies"],
-  rel_sister: ["sister", "sisters", "stepsister", "stepsisters", "stepsis", "sis", "step sis", "bigsis", "big sis", "lilsis", "lil sis", "little sis", "older sister", "older sisters", "younger sister", "younger sisters", "twin sister", "twin sisters", "cousin", "cousin sis", "cousin sister", "cousin stepsis", "cousin step sister", "cousin stepsister", "cousin step sis"],
-  rel_brother: ["brother", "brothers", "stepbrother", "stepbrothers", "stepbro", "bro", "step bro", "bigbro", "big bro", "lilbro", "lil bro", "little bro", "older brother", "older brothers", "younger brother", "younger brothers", "cousin brother", "cousin bro", "cousin stepbrother", "cousin step brother", "cousin stepbro", "cousin step bro"],
-  rel_mom: ["mom", "moms", "mother", "mothers", "stepmom", "stepmoms", "stepmother", "stepmothers", "mommy", "mommies", "mama", "mamas", "mother and son", "milf", "cousin mom", "cousin mother", "cousin stepmom", "cousin stepmother"],
-  rel_daughter: ["daughter", "daughters", "stepdaughter", "stepdaughters", "father and daughter", "mother and daughter", "cousin daughter", "cousin stepdaughter"],
-  rel_father: ["father", "fathers", "dad", "dads", "stepdad", "stepdads", "stepfather", "stepfathers", "daddy", "daddies", "cousin dad", "cousin father", "cousin stepdad", "cousin stepfather", "cousin daddy"],
-  rel_aunt: ["aunt", "aunts", "auntie", "aunties", "aunty", "aunties", "stepaunt", "stepaunts", "aunt and nephew", "cousin aunt", "cousin auntie", "cousin aunty", "cousin stepaunt"],
+  incest: ["incest", "family", "families", "stepfamily", "stepfamilies", "taboo"],
+  rel_sister: ["sister", "sisters", "stepsister", "stepsisters", "stepsis", "sis", "step sis", "step sister", "bigsis", "big sis", "lilsis", "lil sis", "little sis", "older sister", "older sisters", "younger sister", "younger sisters", "twin sister", "twin sisters", "cousin", "cousins", "cousin sis", "cousin sister", "cousin stepsis", "cousin step sister", "cousin stepsister", "cousin step sis", "sister-in-law", "step sister in law"],
+  rel_brother: ["brother", "brothers", "stepbrother", "stepbrothers", "stepbro", "bro", "step bro", "step brother", "bigbro", "big bro", "lilbro", "lil bro", "little bro", "older brother", "older brothers", "younger brother", "younger brothers", "cousin brother", "cousin bro", "cousin stepbrother", "cousin step brother", "cousin stepbro", "cousin step bro", "brother-in-law"],
+  rel_mom: ["mom", "moms", "mother", "mothers", "stepmom", "stepmoms", "stepmother", "stepmothers", "step mom", "step mother", "mommy", "mommies", "mama", "mamas", "maa", "mother and son", "milf", "cousin mom", "cousin mother", "cousin stepmom", "cousin stepmother", "mother-in-law"],
+  rel_daughter: ["daughter", "daughters", "stepdaughter", "stepdaughters", "step daughter", "father and daughter", "mother and daughter", "cousin daughter", "cousin stepdaughter", "daughter-in-law", "in laws", "in law", "granddaughter", "granddaughters"],
+  rel_father: ["father", "fathers", "dad", "dads", "stepdad", "stepdads", "stepfather", "stepfathers", "step father", "daddy", "daddies", "papa", "paa", "cousin dad", "cousin father", "cousin stepdad", "cousin stepfather", "cousin daddy", "father-in-law"],
+  rel_aunt: ["aunt", "aunts", "auntie", "aunties", "aunty", "aunties", "stepaunt", "stepaunts", "step aunt", "aunt and nephew", "cousin aunt", "cousin auntie", "cousin aunty", "cousin stepaunt"],
+  rel_grandma: ["grandma", "grandmas", "grandmother", "grandmothers", "grand mother", "grand mothers", "granny", "grannies", "grandmama", "step grandma", "step grandmas"],
+  rel_grandpa: ["grandpa", "grandpas", "grandfather", "grandfathers", "grand father", "grand fathers", "grandad", "grandads", "grandpapa", "step grandpa", "step grandpas"],
+  rel_son: ["son", "sons", "stepson", "stepsons", "step son", "step sons", "grandson", "grandsons"],
 };
 
 // (Category word matching lives in threeD.ts as
@@ -808,37 +813,48 @@ const getPostsImpl = async function (params) {
       return [];
     }
 
-    var tagResults = await Promise.all(
-      tags.map(function (tag) {
-        var cleanTag = encodeURIComponent(String(tag).trim().replace(/\s+/g, "-"));
-        var searchUrl =
-          page > 1
-            ? baseUrl + "/search/" + cleanTag + "/" + page + "/"
-            : baseUrl + "/search/" + cleanTag + "/";
-        return parseVideoGrid({
-          url: searchUrl,
-          baseUrl: baseUrl,
-          axios: axios,
-          cheerio: cheerio,
-          commonHeaders: commonHeaders,
-          signal: signal,
-          kvStore: kvStore,
-          requireVideo: true,
-        });
-      })
-    );
-
-    // Cap the merged list: 7 tags return ~40-70 posts, and page 2
-    // fetches the next page anyway. Shipping all of them made the
-    // sandbox-bridge transfer and the app's list work heavier on
-    // every scroll/category load.
-    // Sort the merged list alphabetically (interleaving alone would
-    // scatter parts of the same clip again) and then cap it.
-    var merged = interleavePosts(tagResults);
-    merged.sort(function (a, b) {
-      return compareTitle(a.title || "", b.title || "");
+    // Maximum content, nothing skipped (user, 2026-11-18): the old code
+    // fetched page N of every tag, merged them, and returned only the
+    // first 60 — the rest of that term-page never appeared on any app
+    // page. getPooledCategoryPage keeps the FULL merged pool for a
+    // term-page in kvStore and serves it in 60-video slices across
+    // consecutive app pages, so every video is eventually shown.
+    // fetchTermPage(tp) builds the pool for term-page tp.
+    var fetchTermPage = async function (tp) {
+      var tagResults = await Promise.all(
+        tags.map(function (tag) {
+          var cleanTag = encodeURIComponent(String(tag).trim().replace(/\s+/g, "-"));
+          var searchUrl =
+            tp > 1
+              ? baseUrl + "/search/" + cleanTag + "/" + tp + "/"
+              : baseUrl + "/search/" + cleanTag + "/";
+          return parseVideoGrid({
+            url: searchUrl,
+            baseUrl: baseUrl,
+            axios: axios,
+            cheerio: cheerio,
+            commonHeaders: commonHeaders,
+            signal: signal,
+            kvStore: kvStore,
+            requireVideo: true,
+          });
+        })
+      );
+      // Sort the merged list alphabetically (interleaving alone would
+      // scatter parts of the same clip again). No cap here — the pool
+      // cache slices it into 60-video app pages.
+      var merged = interleavePosts(tagResults);
+      merged.sort(function (a, b) {
+        return compareTitle(a.title || "", b.title || "");
+      });
+      return merged;
+    };
+    return getPooledCategoryPage({
+      kvStore: kvStore,
+      filter: filter,
+      page: page,
+      fetchTermPage: fetchTermPage,
     });
-    return merged.slice(0, 60);
   }
 
   if (filter === "/family/" || filter === "/family") {
@@ -917,17 +933,18 @@ const getSearchPostsImpl = async function (params) {
   var kvStore = providerContext.kvStore;
 
   var baseUrl = await getBase(kvStore, axios);
+  // Normalized query is the pool's key: same search = same pool, so
+  // scrolling reuses the cached results instead of re-fetching.
+  var normQuery = (searchQuery || "").trim().toLowerCase().replace(/\s+/g, " ");
   var cleanQuery = encodeURIComponent(searchQuery.trim().replace(/\s+/g, "-"));
-  var targetUrl =
-    page > 1
-      ? baseUrl + "/search/" + cleanQuery + "/" + page + "/"
-      : baseUrl + "/search/" + cleanQuery + "/";
 
-  // 3D-only mode: keep the query's results that are also in the verified
-  // 3D pool. (A combined "/search/<query>-3d/" does NOT narrow on this
-  // site — verified live 2026-11-18: it returns the same videos as the
-  // plain query — so the pool intersection is the only exact filter.)
-  if (await is3DOn(kvStore)) {
+  // 3D-only mode: the verified 3D pool (built once, cached 1h). A
+  // combined "/search/<query>-3d/" does NOT narrow on this site —
+  // verified live 2026-11-18: it returns the same videos as the plain
+  // query — so the pool intersection is the only exact filter.
+  var threeDOn = await is3DOn(kvStore);
+  var cached = null;
+  if (threeDOn) {
     var threeDContext = build3DContext({
       baseUrl: baseUrl,
       axios: axios,
@@ -936,7 +953,17 @@ const getSearchPostsImpl = async function (params) {
       signal: signal,
       kvStore: kvStore,
     });
-    var cached = await ensure3DPool(threeDContext);
+    cached = await ensure3DPool(threeDContext);
+  }
+
+  // One site search page (sp is 1-based). In 3D mode the page is
+  // intersected with the verified pool; without a pool, title keywords
+  // are the fallback filter.
+  var fetchSitePage = async function (sp) {
+    var targetUrl =
+      sp > 1
+        ? baseUrl + "/search/" + cleanQuery + "/" + sp + "/"
+        : baseUrl + "/search/" + cleanQuery + "/";
     var plain = await parseVideoGrid({
       url: targetUrl,
       baseUrl: baseUrl,
@@ -947,28 +974,34 @@ const getSearchPostsImpl = async function (params) {
       kvStore: kvStore,
       requireVideo: true,
     });
-    if (cached) {
-      var fromQuery = intersectWithPool(plain, cached);
-      var fromPool = poolTitleSearch(cached, searchQuery);
-      var fromCategory = poolCategorySearch(cached, searchQuery);
-      return dedupePosts(fromQuery.concat(fromPool, fromCategory)).slice(0, 60);
-    }
-    return plain
-      .filter(function (p) {
-        return titleMatchesAnyKeyword(p.title);
-      })
-      .slice(0, 60);
+    if (!threeDOn) return plain;
+    if (cached) return intersectWithPool(plain, cached);
+    return plain.filter(function (p) {
+      return titleMatchesAnyKeyword(p.title);
+    });
+  };
+
+  // 3D pool matches for this query (same on every call; the pool cache
+  // dedupes them to a single copy). Empty in normal mode.
+  var extraPosts = [];
+  if (threeDOn && cached) {
+    extraPosts = dedupePosts(
+      poolTitleSearch(cached, searchQuery).concat(
+        poolCategorySearch(cached, searchQuery)
+      )
+    );
   }
 
-  return parseVideoGrid({
-    url: targetUrl,
-    baseUrl: baseUrl,
-    axios: axios,
-    cheerio: cheerio,
-    commonHeaders: commonHeaders,
-    signal: signal,
+  // The search pool serves a different 60-video slice per app page, so
+  // scrolling a search keeps showing new videos — never page 1 again.
+  // (Before this, 3D mode sliced the same pooled set to its first 60
+  // on every page: only 37 unique videos across 3 pages for "sister".)
+  return getPooledSearchPage({
     kvStore: kvStore,
-    requireVideo: true,
+    query: normQuery,
+    page: page,
+    fetchSitePage: fetchSitePage,
+    extraPosts: extraPosts,
   });
 };
 

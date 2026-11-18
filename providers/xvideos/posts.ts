@@ -13,6 +13,8 @@ import {
   classifyRelation,
   dedupePosts,
   keepLongEnough,
+  getPooledCategoryPage,
+  getPooledSearchPage,
 } from "../threeD";
 import { groupSeriesPosts } from "../series";
 
@@ -546,41 +548,52 @@ const getPostsImpl = async function (params) {
       return [];
     }
 
-    var queryResults = await Promise.all(
-      queries.map(function (query) {
-        var pageIndex = Math.max(0, page - 1);
-        // Config queries use "+" as a space ("big+sister"). Encoding it
-        // raw turns it into %2B (a literal plus), so XVideos found
-        // nothing. Turn "+" into a space before encoding.
-        var targetUrl =
-          baseUrl +
-          "/?k=" +
-          encodeURIComponent(String(query).replace(/\+/g, " ")) +
-          "&p=" +
-          pageIndex;
-        return parseVideoGrid({
-          url: targetUrl,
-          baseUrl: baseUrl,
-          axios: axios,
-          cheerio: cheerio,
-          commonHeaders: commonHeaders,
-          signal: signal,
-          kvStore: kvStore,
-        });
-      })
-    );
-
-    // Cap the merged list: 7 queries return ~150-180 posts, but Vega
-    // only shows the first rows and page 2 fetches the next page anyway.
-    // Shipping all of them made the sandbox-bridge transfer and the
-    // app's list work much heavier on every scroll/category load.
-    // Sort the merged list alphabetically (interleaving alone would
-    // scatter parts of the same clip again) and then cap it.
-    var merged = interleavePosts(queryResults);
-    merged.sort(function (a, b) {
-      return compareTitle(a.title || "", b.title || "");
+    // Maximum content, nothing skipped (user, 2026-11-18): the old code
+    // fetched page N of every term, merged ~450 videos, and returned
+    // only the first 60 — the rest of that term-page never appeared on
+    // any app page. getPooledCategoryPage keeps the FULL merged pool
+    // for a term-page in kvStore and serves it in 60-video slices
+    // across consecutive app pages, so every video is eventually
+    // shown. fetchTermPage(tp) builds the pool for term-page tp.
+    var fetchTermPage = async function (tp) {
+      var pageIndex = Math.max(0, tp - 1);
+      var termResults = await Promise.all(
+        queries.map(function (query) {
+          // Config queries use "+" as a space ("big+sister"). Encoding it
+          // raw turns it into %2B (a literal plus), so XVideos found
+          // nothing. Turn "+" into a space before encoding.
+          var targetUrl =
+            baseUrl +
+            "/?k=" +
+            encodeURIComponent(String(query).replace(/\+/g, " ")) +
+            "&p=" +
+            pageIndex;
+          return parseVideoGrid({
+            url: targetUrl,
+            baseUrl: baseUrl,
+            axios: axios,
+            cheerio: cheerio,
+            commonHeaders: commonHeaders,
+            signal: signal,
+            kvStore: kvStore,
+          });
+        })
+      );
+      // Sort the merged list alphabetically (interleaving alone would
+      // scatter parts of the same clip again). No cap here — the pool
+      // cache slices it into 60-video app pages.
+      var merged = interleavePosts(termResults);
+      merged.sort(function (a, b) {
+        return compareTitle(a.title || "", b.title || "");
+      });
+      return merged;
+    };
+    return getPooledCategoryPage({
+      kvStore: kvStore,
+      filter: filter,
+      page: page,
+      fetchTermPage: fetchTermPage,
     });
-    return merged.slice(0, 60);
   }
 
   if (filter === "/family/" || filter === "/family") {
@@ -660,14 +673,15 @@ const getSearchPostsImpl = async function (params) {
   var kvStore = providerContext.kvStore;
 
   var baseUrl = await getBase(kvStore, axios);
-  var pageIndex = Math.max(0, page - 1);
-  var targetUrl = baseUrl + "/?k=" + encodeURIComponent(searchQuery) + "&p=" + pageIndex;
+  // Normalized query is the pool's key: same search = same pool, so
+  // scrolling reuses the cached results instead of re-fetching.
+  var normQuery = (searchQuery || "").trim().toLowerCase().replace(/\s+/g, " ");
 
-  // 3D-only mode: keep the query's results that are also in the
-  // verified 3D pool, plus a direct "<query> 3d" search (XVideos
-  // keyword search is full-text, so this finds 3D matches beyond the
-  // cached pool). Dedupe + under-2-min filter + cap 60, as usual.
-  if (await is3DOn(kvStore)) {
+  // 3D-only mode: the verified 3D pool (built once, cached 1h). The
+  // pool is loaded once here and closed over by fetchSitePage.
+  var threeDOn = await is3DOn(kvStore);
+  var cached = null;
+  if (threeDOn) {
     var threeDContext = build3DContext({
       baseUrl: baseUrl,
       axios: axios,
@@ -676,7 +690,19 @@ const getSearchPostsImpl = async function (params) {
       signal: signal,
       kvStore: kvStore,
     });
-    var cached = await ensure3DPool(threeDContext);
+    cached = await ensure3DPool(threeDContext);
+  }
+
+  // One site search page (sp is 1-based; XVideos search pages are
+  // 0-indexed in the URL: &p=<sp-1>). In 3D mode the plain page is
+  // intersected with the verified pool and a direct "<query> 3d"
+  // search is added (XVideos keyword search is full-text, so this
+  // finds 3D matches beyond the cached pool). Dedupe + under-2-min
+  // filter, as usual.
+  var fetchSitePage = async function (sp) {
+    var pageIndex = Math.max(0, sp - 1);
+    var targetUrl =
+      baseUrl + "/?k=" + encodeURIComponent(searchQuery) + "&p=" + pageIndex;
     var plain = await parseVideoGrid({
       url: targetUrl,
       baseUrl: baseUrl,
@@ -686,13 +712,19 @@ const getSearchPostsImpl = async function (params) {
       signal: signal,
       kvStore: kvStore,
     });
+    if (!threeDOn) return plain;
     var matched = cached
       ? intersectWithPool(plain, cached)
       : plain.filter(function (p) {
           return titleMatchesAnyKeyword(p.title);
         });
     var direct = await parseVideoGrid({
-      url: baseUrl + "/?k=" + encodeURIComponent(searchQuery + " 3d") + "&p=" + pageIndex,
+      url:
+        baseUrl +
+        "/?k=" +
+        encodeURIComponent(searchQuery + " 3d") +
+        "&p=" +
+        pageIndex,
       baseUrl: baseUrl,
       axios: axios,
       cheerio: cheerio,
@@ -700,29 +732,32 @@ const getSearchPostsImpl = async function (params) {
       signal: signal,
       kvStore: kvStore,
     });
-    var merged = dedupePosts(
+    return dedupePosts(keepLongEnough(matched.concat(direct)));
+  };
+
+  // 3D pool matches for this query (same on every call; the pool cache
+  // dedupes them to a single copy). Empty in normal mode.
+  var extraPosts = [];
+  if (threeDOn && cached) {
+    extraPosts = dedupePosts(
       keepLongEnough(
-        matched.concat(
-          direct,
-          cached ? poolTitleSearch(cached, searchQuery) : [],
-          cached ? poolCategorySearch(cached, searchQuery) : []
+        poolTitleSearch(cached, searchQuery).concat(
+          poolCategorySearch(cached, searchQuery)
         )
       )
     );
-    merged.sort(function (a, b) {
-      return compareTitle(a.title || "", b.title || "");
-    });
-    return merged.slice(0, 60);
   }
 
-  return parseVideoGrid({
-    url: targetUrl,
-    baseUrl: baseUrl,
-    axios: axios,
-    cheerio: cheerio,
-    commonHeaders: commonHeaders,
-    signal: signal,
+  // The search pool serves a different 60-video slice per app page, so
+  // scrolling a search keeps showing new videos — never page 1 again.
+  // (Before this, 3D mode sliced the same pooled set to its first 60
+  // on every page: 102 dupes across 3 pages for "sister".)
+  return getPooledSearchPage({
     kvStore: kvStore,
+    query: normQuery,
+    page: page,
+    fetchSitePage: fetchSitePage,
+    extraPosts: extraPosts,
   });
 };
 

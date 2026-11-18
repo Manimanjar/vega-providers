@@ -54,6 +54,329 @@ var THREE_D_BUCKET_CAP = 120; // max videos per category bucket (2 pages)
 var THREE_D_WAVE_SIZE = 5; // keywords fetched per wave (XVideos 429s on hammering)
 var THREE_D_WAVE_GAP_MS = 400; // pause between waves
 
+// ---------------------------------------------------------------------------
+// Category pool cache — maximum content, nothing skipped (user, 2026-11-18).
+//
+// The problem it fixes: the old multi_query fetched page N of every
+// search term, merged them (~450 videos for a big category), sorted,
+// and returned only the first 60. The other ~390 videos of that
+// term-page were silently dropped and NEVER appeared on any app page —
+// page N+1 fetches a different term-page entirely. So ~87% of each
+// term-page was hidden. That is the single biggest content loss in the
+// normal feed, and it is what "nothing to skip and miss" means.
+//
+// The fix: keep the FULL merged pool for a term-page in kvStore (which
+// survives sandbox re-evaluation; module memory does not) and serve it
+// in 60-video slices across consecutive app pages, so every video is
+// eventually shown. A small manifest records each term-page's pool size
+// so an app page number maps to the right term-page + offset. Pools
+// expire after 1 hour. If kvStore is unavailable the helper falls back
+// to the old behaviour (first 60 of the fetched term-page) instead of
+// breaking the feed.
+// ---------------------------------------------------------------------------
+var CAT_POOL_META_KEY = "catPoolMetaV1";
+var CAT_POOL_KEY = "catPoolV1";
+var CAT_POOL_TTL_MS = 3600000; // 1 hour
+var CAT_POOL_PAGE_SIZE = 60;
+
+async function kvGetJson(kvStore, key) {
+  try {
+    if (!kvStore || typeof kvStore.get !== "function") return null;
+    var raw = await kvStore.get(key);
+    if (!raw) return null;
+    var parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function kvSetJson(kvStore, key, value) {
+  try {
+    if (!kvStore || typeof kvStore.set !== "function") return false;
+    await kvStore.set(key, JSON.stringify(value));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Fetch (or read from cache) the full merged pool for one term-page of a
+// category, and record its size in the manifest. fetchTermPage(tp)
+// returns the merged, sorted, deduped posts for term-page tp. Pools are
+// stored per (filter, term-page) so going back to an earlier app page
+// does not re-fetch; kvStore sets are best-effort (a full store just
+// means the next request re-fetches, never a broken feed).
+async function getPoolForTermPage(kvStore, filter, tp, fetchTermPage) {
+  var now = Date.now();
+  var cached = await kvGetJson(kvStore, CAT_POOL_KEY + ":" + filter + ":" + tp);
+  if (
+    cached &&
+    cached.tp === tp &&
+    Array.isArray(cached.posts) &&
+    cached.ts &&
+    now - cached.ts < CAT_POOL_TTL_MS
+  ) {
+    return cached.posts;
+  }
+  var posts = (await fetchTermPage(tp)) || [];
+  var meta = await kvGetJson(kvStore, CAT_POOL_META_KEY + ":" + filter);
+  var sizes = meta && Array.isArray(meta.sizes) ? meta.sizes : [];
+  if (!meta || !meta.ts || now - meta.ts > CAT_POOL_TTL_MS) sizes = [];
+  while (sizes.length < tp) sizes.push(0);
+  sizes[tp - 1] = posts.length;
+  await kvSetJson(kvStore, CAT_POOL_META_KEY + ":" + filter, {
+    sizes: sizes,
+    ts: now,
+  });
+  await kvSetJson(kvStore, CAT_POOL_KEY + ":" + filter + ":" + tp, {
+    tp: tp,
+    posts: posts,
+    ts: now,
+  });
+  return posts;
+}
+
+// The 60-video slice for app page `page` of a category, drawn from the
+// pooled stream of all term-pages so nothing is ever dropped.
+// opts: { kvStore, filter, page, fetchTermPage }
+export async function getPooledCategoryPage(opts) {
+  var kvStore = opts.kvStore;
+  var filter = opts.filter;
+  var page = Math.max(1, opts.page || 1);
+  var fetchTermPage = opts.fetchTermPage;
+  var PAGE = CAT_POOL_PAGE_SIZE;
+  var globalStart = (page - 1) * PAGE;
+  var now = Date.now();
+  try {
+    var meta = await kvGetJson(kvStore, CAT_POOL_META_KEY + ":" + filter);
+    var sizes = meta && Array.isArray(meta.sizes) ? meta.sizes : [];
+    if (!meta || !meta.ts || now - meta.ts > CAT_POOL_TTL_MS) sizes = [];
+    // Map the global index to (term-page, offset) using the manifest.
+    // Term-pages not yet fetched have size 0 in the manifest; if the
+    // index lands beyond every fetched pool, the next term-page is
+    // fetched below and the manifest fills in.
+    var acc = 0;
+    var tp = 1;
+    var offset = globalStart;
+    var found = false;
+    for (var i = 0; i < sizes.length; i++) {
+      if (globalStart < acc + sizes[i]) {
+        tp = i + 1;
+        offset = globalStart - acc;
+        found = true;
+        break;
+      }
+      acc += sizes[i];
+    }
+    if (!found) {
+      tp = sizes.length + 1;
+      offset = globalStart - acc;
+    }
+    // A 60-video slice can straddle two term-pages (e.g. the last 30
+    // of tp1 plus the first 30 of tp2), so accumulate across term-pages
+    // until the page is full or the stream runs out.
+    var result = [];
+    var remaining = PAGE;
+    var curTp = tp;
+    var curOffset = offset;
+    var guard = 0;
+    while (remaining > 0 && guard < 20) {
+      guard++;
+      var pool = await getPoolForTermPage(kvStore, filter, curTp, fetchTermPage);
+      if (!pool || pool.length === 0) break;
+      if (curOffset >= pool.length) {
+        curOffset -= pool.length;
+        curTp++;
+        continue;
+      }
+      var take = pool.slice(curOffset, curOffset + remaining);
+      for (var k = 0; k < take.length; k++) result.push(take[k]);
+      remaining -= take.length;
+      curOffset += take.length;
+      if (curOffset >= pool.length) {
+        curTp++;
+        curOffset = 0;
+      } else {
+        break;
+      }
+    }
+    return result;
+  } catch (e) {
+    // kvStore trouble: fall back to the old behaviour (first 60 of the
+    // fetched term-page) rather than breaking the feed.
+    var fallback = (await fetchTermPage(Math.max(1, page))) || [];
+    return fallback.slice(0, PAGE);
+  }
+}
+
+// ---- Search pool cache (user, 2026-11-18: "only page 1 search results
+// are shown") ----
+// ROOT CAUSE (proven live 2026-11-18): in 3D mode, getSearchPosts built
+// its result from poolTitleSearch + poolCategorySearch, which return the
+// SAME full set of matching pool videos on every app page, then sliced
+// it to the first 60 — so app pages 1, 2 and 3 were the same videos
+// (XVideos "sister": 174 posts across 3 pages but only 72 unique, 102
+// dupes; Rule34Video "sister": 111 posts but only 37 unique, 74 dupes).
+// The user scrolled and kept seeing page 1 again.
+// FIX: a search is now a POOL, like the category pool above. One kvStore
+// entry per normalized query holds every video fetched so far (3D pool
+// matches first, then site search pages in the site's own order,
+// deduped), and each app page serves a different 60-video slice of it.
+// Site pages are fetched LAZILY — only as many as the requested slice
+// needs — so a search for a rare keyword stays fast, and scrolling
+// deeper keeps fetching further site pages until the cap (10 site pages,
+// ~240 videos) or the site runs out. Nothing is ever shown twice, and
+// every site page is eventually reachable. kvStore trouble falls back to
+// the old behaviour (just the requested site page) instead of breaking
+// the search.
+var SEARCH_POOL_KEY = "searchPoolV1";
+var SEARCH_POOL_TTL_MS = 3600000; // 1 hour
+var SEARCH_POOL_PAGE_SIZE = 60;
+var SEARCH_MAX_SITE_PAGES = 10;
+
+// opts: { kvStore, query, page, fetchSitePage, extraPosts }
+// query is the NORMALIZED search string (lowercase, single spaces) and
+// is the pool's key. fetchSitePage(sp) returns the parsed posts for
+// site search page sp (1-based), already filtered for the current mode
+// (3D intersection included). extraPosts are the 3D pool matches for
+// the query (same on every call); [] in normal mode.
+export async function getPooledSearchPage(opts) {
+  var kvStore = opts.kvStore;
+  var query = opts.query || "";
+  var page = Math.max(1, opts.page || 1);
+  var fetchSitePage = opts.fetchSitePage;
+  var extraPosts = opts.extraPosts || [];
+  var PAGE = SEARCH_POOL_PAGE_SIZE;
+  var now = Date.now();
+  var key = SEARCH_POOL_KEY + ":" + query;
+  try {
+    var cached = await kvGetJson(kvStore, key);
+    var pool = [];
+    var fetchedPages = 0;
+    // nextStart is the global index where the next FORWARD page must
+    // begin. It is what makes the slices gap-proof: if an early page
+    // was served short (the pool was thin because a site page 502'd),
+    // the next forward page starts where the last one ENDED, not at
+    // its fixed (page-1)*60 index — otherwise the videos between the
+    // short slice's end and the fixed index would never be shown.
+    // Backward requests (re-opening an earlier page) use their fixed
+    // slice, because that content was already served and is stable.
+    var nextStart = 0;
+    if (
+      cached &&
+      Array.isArray(cached.posts) &&
+      cached.ts &&
+      now - cached.ts < SEARCH_POOL_TTL_MS
+    ) {
+      pool = cached.posts;
+      fetchedPages = cached.fetchedPages || 0;
+      nextStart = cached.nextStart || 0;
+    }
+    // 3D pool matches go first (verified 3D, most relevant in 3D mode)
+    // and are merged on every call — dedupe keeps them to one copy.
+    if (extraPosts.length > 0) {
+      pool = dedupePosts(extraPosts.concat(pool));
+    }
+    // Fetch more site pages until the pool covers the requested slice.
+    // Site pages arrive in the site's own order and are appended, so
+    // the stream order is stable across calls and pages never overlap.
+    // A site page can come back empty for a TRANSIENT reason (XVideos
+    // 429 rate-limit, Rule34Video 502) as well as because the site is
+    // genuinely out of results — so an empty page is RETRIED once
+    // (after a short pause, which usually clears a 429/502) and only
+    // then counted as empty, and only 5 empty pages in a row end the
+    // fetch. A single failed page must never strand the user on a
+    // short or empty app page while further site pages still hold
+    // content.
+    var emptyStreak = 0;
+    // The fetch target is the END of the slice we are about to serve
+    // (which may be nextStart+60 for a forward page, not page*60).
+    var wantEnd = Math.max(page * PAGE, nextStart + PAGE);
+    while (pool.length < wantEnd && fetchedPages < SEARCH_MAX_SITE_PAGES) {
+      var sp = fetchedPages + 1;
+      var pagePosts = [];
+      try {
+        pagePosts = (await fetchSitePage(sp)) || [];
+      } catch (e) {
+        pagePosts = [];
+      }
+      if (pagePosts.length === 0) {
+        // One retry after a pause: a 429/502 is usually gone by then.
+        try {
+          await new Promise(function (r) {
+            setTimeout(r, 1200);
+          });
+          pagePosts = (await fetchSitePage(sp)) || [];
+        } catch (e) {
+          pagePosts = [];
+        }
+      }
+      fetchedPages = sp;
+      if (pagePosts.length === 0) {
+        emptyStreak++;
+        if (emptyStreak >= 5) break;
+        continue;
+      }
+      emptyStreak = 0;
+      var before = pool.length;
+      pool = dedupePosts(pool.concat(pagePosts));
+      // Nothing new: the site is repeating itself (or every video on
+      // the page was already in the pool) — stop instead of looping.
+      if (pool.length === before) break;
+    }
+    // Serve the slice. pageStarts/pageEnds record the exact global
+    // range each app page served, so re-opening a page returns the
+    // SAME videos it showed the first time — even if the pool has
+    // grown since (a re-request must not suddenly serve 60 videos
+    // when it first served 30, or those extra videos would duplicate
+    // the next page). A page served for the first time starts at
+    // nextStart — the end of the last forward slice — so a short early
+    // page can never strand videos in a gap: the next page continues
+    // exactly where the last one ended instead of jumping to its
+    // fixed (page-1)*60 index.
+    var pageStarts = cached && cached.pageStarts ? cached.pageStarts : {};
+    var pageEnds = cached && cached.pageEnds ? cached.pageEnds : {};
+    var isFirstServe =
+      pageStarts[page] === undefined || pageStarts[page] === null;
+    var start;
+    var end;
+    if (isFirstServe) {
+      start = nextStart;
+      end = start + PAGE;
+      pageStarts[page] = start;
+    } else {
+      start = pageStarts[page];
+      end = pageEnds[page] !== undefined && pageEnds[page] !== null
+        ? pageEnds[page]
+        : start + PAGE;
+    }
+    var slice = pool.slice(start, end);
+    // Only a first serve advances nextStart and records its end; a
+    // re-request must not move either, or later pages would shift.
+    if (isFirstServe && slice.length > 0) {
+      pageEnds[page] = start + slice.length;
+      if (start + slice.length > nextStart) {
+        nextStart = start + slice.length;
+      }
+    }
+    await kvSetJson(kvStore, key, {
+      posts: pool,
+      fetchedPages: fetchedPages,
+      nextStart: nextStart,
+      pageStarts: pageStarts,
+      pageEnds: pageEnds,
+      ts: now,
+    });
+    return slice;
+  } catch (e) {
+    // kvStore trouble: fall back to the old behaviour (just the
+    // requested site page) rather than breaking the search.
+    var fallback = (await fetchSitePage(page)) || [];
+    return fallback.slice(0, PAGE);
+  }
+}
+
 // Every keyword the user named is kept — nothing is skipped. Tier 1 is
 // what these sites actually tag 3D content with; Tier 2 is the user's
 // own words; Tier 3 is animation/cartoon, because on adult sites 3D
