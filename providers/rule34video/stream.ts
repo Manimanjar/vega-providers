@@ -226,17 +226,28 @@ export const getStream = async function ({
 
     rawVariants.sort((a, b) => b.rank - a.rank);
 
-    // Resolve direct CDN links in parallel to completely eliminate DDoS-guard 302 hop latency
-    await Promise.all(
-      rawVariants.map(async (item) => {
-        try {
-          const direct = await resolveDirectUrl(item.url, axios, defaultHeaders);
-          if (direct && direct.startsWith("http")) {
-            item.url = direct;
-          }
-        } catch (e) {}
-      })
-    );
+    // Resolve direct CDN links SEQUENTIALLY, highest quality first.
+    // The site's file endpoint (get_file) 302-redirects to the fast
+    // boomio CDN, but its guard only lets ONE file request through
+    // per window — the first HEAD gets the CDN link, the rest get
+    // 403 (verified live 2026-11-18, even with 5s gaps between
+    // requests). The old code fired all four HEADs in parallel, so
+    // a RANDOM quality won the one redirect (often 720p) while the
+    // highest quality stayed on the slow origin server — that is
+    // why some videos streamed at 1-1.5 Mbps while others were
+    // fast. Resolving highest-first puts the fast CDN link on the
+    // first (default) stream. Once one quality resolves, the rest
+    // would 403 anyway, so stop there — the unresolved qualities
+    // stay in the list as fallback (still playable, just slower).
+    for (const item of rawVariants) {
+      try {
+        const direct = await resolveDirectUrl(item.url, axios, defaultHeaders);
+        if (direct && direct.startsWith("http") && direct !== item.url) {
+          item.url = direct;
+          break;
+        }
+      } catch (e) {}
+    }
 
     const streamHeaders = {
       Referer: baseUrl + "/",

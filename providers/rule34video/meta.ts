@@ -1,4 +1,5 @@
 import { Info, ProviderContext } from "../types";
+import { parsePartTitle, fetchSeriesParts } from "../series";
 
 const URLS_ENDPOINT =
   "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
@@ -133,10 +134,26 @@ export const getMeta = async function ({
       $("title").text().replace(/- Rule34Video/i, "").trim() ||
       "Video";
 
-    const image =
-      $("meta[property='og:image']").attr("content") ||
-      $(".wrap_image img").first().attr("src") ||
-      "";
+    // The video's own poster is the JSON-LD thumbnailUrl
+    // (contents/videos_screenshots/<id>/preview.jpg). og:image is
+    // empty on this site, and .wrap_image is the CATEGORY cover
+    // (contents/categories/<id>/s1_<id>.jpg) — using it made the
+    // detail screen show a wrong low-quality image instead of the
+    // video's own thumbnail (user report 2026-11-18: the detail
+    // thumbnail "changes" from the good list thumbnail to what looks
+    // like a uploader/category image). Fall back to constructing the
+    // preview URL from the video ID in the link (same pattern the
+    // site uses: bucket = floor(id / 10000) * 10000).
+    var thumbMatch = html.match(/"thumbnailUrl"\s*:\s*"([^"]+)"/i);
+    var image = (thumbMatch && thumbMatch[1]) || "";
+    if (!image) {
+      var idMatch = url.match(/\/video\/(\d+)/);
+      if (idMatch) {
+        var vid = parseInt(idMatch[1], 10);
+        var bucket = Math.floor(vid / 10000) * 10000;
+        image = baseUrl + "/contents/videos_screenshots/" + bucket + "/" + vid + "/preview.jpg";
+      }
+    }
 
     const is4k = html.includes("2160p") || html.includes("4k") || html.includes("_4k");
     const is1080p = html.includes("1080p");
@@ -176,6 +193,59 @@ export const getMeta = async function ({
       synopsisParts.push(`Tags: ${tags.join(", ")}.`);
     }
     const synopsis = synopsisParts.join(" ");
+
+    // Parts grouping: if this video is a numbered part of a series,
+    // the detail becomes the series page — the first part's thumbnail
+    // and every part listed below in order, like chapters in the
+    // comics app. A failed search, or fewer than 2 parts, falls
+    // through to the single video below — grouping can never hide a
+    // video. (Only numbered parts expand here; a named part opened
+    // directly still plays fine, and it appears in the parts list
+    // when any numbered part of its series is opened.)
+    var parsed = parsePartTitle(title);
+    if (parsed && parsed.partNum != null) {
+      var seriesParts = [];
+      try {
+        seriesParts = await fetchSeriesParts({
+          axios: axios,
+          cheerio: cheerio,
+          baseUrl: baseUrl,
+          site: "rule34video",
+          baseTitle: parsed.base,
+          commonHeaders: commonHeaders,
+        });
+      } catch (e) {
+        seriesParts = [];
+      }
+      if (seriesParts.length >= 2) {
+        var firstImage = (seriesParts[0] && seriesParts[0].image) || image;
+        var seriesSynopsisParts = [
+          parsed.base + " — " + seriesParts.length + " parts • " + quality + ".",
+        ];
+        if (tags.length > 0) {
+          seriesSynopsisParts.push("Tags: " + tags.join(", ") + ".");
+        }
+        return {
+          title: parsed.base,
+          synopsis: seriesSynopsisParts.join(" "),
+          image: firstImage,
+          poster: firstImage,
+          imdbId: "",
+          type: "series",
+          tags: tags.length > 0 ? tags : undefined,
+          rating: quality,
+          webUrl: url,
+          linkList: [
+            {
+              title: "Parts",
+              directLinks: seriesParts.map(function (p) {
+                return { title: p.title, link: p.link, type: "movie" };
+              }),
+            },
+          ],
+        };
+      }
+    }
 
     return {
       title,

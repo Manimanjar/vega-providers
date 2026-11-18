@@ -1,4 +1,5 @@
 import { Info, ProviderContext } from "../types";
+import { parsePartTitle, fetchSeriesParts } from "../series";
 
 export const getMeta = async function ({
   link,
@@ -102,6 +103,63 @@ export const getMeta = async function ({
       synopsisParts.push(`Tags: ${tags.join(", ")}.`);
     }
     const synopsis = synopsisParts.join(" ");
+
+    // Parts grouping: if this video is a numbered part of a series,
+    // the detail becomes the series page — the first part's thumbnail
+    // and every part listed below in order, like chapters in the
+    // comics app. A failed search, or fewer than 2 parts, falls
+    // through to the single video below — grouping can never hide a
+    // video. (Only numbered parts expand here; a named part opened
+    // directly still plays fine, and it appears in the parts list
+    // when any numbered part of its series is opened.)
+    var parsed = parsePartTitle(title);
+    if (parsed && parsed.partNum != null) {
+      var seriesParts = [];
+      try {
+        seriesParts = await fetchSeriesParts({
+          axios: axios,
+          cheerio: cheerio,
+          baseUrl: baseUrl,
+          site: "xvideos",
+          baseTitle: parsed.base,
+          commonHeaders: commonHeaders,
+        });
+      } catch (e) {
+        seriesParts = [];
+      }
+      if (seriesParts.length >= 2) {
+        var firstImage = (seriesParts[0] && seriesParts[0].image) || image;
+        var seriesSynopsisParts = [
+          parsed.base + " — " + seriesParts.length + " parts • " + quality + ".",
+        ];
+        if (cast.length > 0) {
+          seriesSynopsisParts.push("Starring " + cast.join(", ") + ".");
+        }
+        if (tags.length > 0) {
+          seriesSynopsisParts.push("Tags: " + tags.join(", ") + ".");
+        }
+        return {
+          title: parsed.base,
+          synopsis: seriesSynopsisParts.join(" "),
+          image: firstImage,
+          poster: firstImage,
+          imdbId: "",
+          type: "series",
+          tags: tags.length > 0 ? tags : undefined,
+          cast: cast.length > 0 ? cast : undefined,
+          rating: duration || undefined,
+          webUrl: url,
+          linkList: [
+            {
+              title: "Parts",
+              directLinks: seriesParts.map(function (p) {
+                return { title: p.title, link: p.link, type: "movie" };
+              }),
+            },
+          ],
+        };
+      }
+    }
 
     return {
       title,

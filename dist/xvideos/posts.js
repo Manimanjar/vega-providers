@@ -42,56 +42,847 @@ var categories_config_default = {
       rule34Tags: []
     },
     {
+      title: "Incest",
+      filter: "incest",
+      mode: "multi_query",
+      xvideosQueries: ["taboo", "stepfamily", "taboo+family"],
+      rule34Tags: ["incest", "family"]
+    },
+    {
       title: "Sister",
       filter: "rel_sister",
       mode: "multi_query",
-      xvideosQueries: ["sister", "stepsister", "stepsis", "sis", "big+sister", "little+sister", "twin+sister"],
-      rule34Tags: ["sister", "stepsister", "sis", "stepsis", "older_sister", "younger_sister", "twin_sister"]
+      xvideosQueries: ["sister", "stepsister", "cousin", "stepsis", "sis", "big+sister", "little+sister", "twin+sister", "cousin+sis", "cousin+sister", "cousin+stepsis", "cousin+step+sister"],
+      rule34Tags: ["sister", "stepsister", "cousin", "sis", "stepsis", "older_sister", "younger_sister", "twin_sister", "cousin_sister", "cousin_sis"]
     },
     {
       title: "Brother",
       filter: "rel_brother",
       mode: "multi_query",
-      xvideosQueries: ["brother", "stepbrother", "stepbro", "bro", "big+brother", "younger+brother"],
-      rule34Tags: ["brother", "stepbrother", "bro", "stepbro", "older_brother", "younger_brother"]
+      xvideosQueries: ["brother", "stepbrother", "cousin+brother", "stepbro", "bro", "big+brother", "younger+brother", "cousin+bro", "cousin+stepbrother"],
+      rule34Tags: ["brother", "stepbrother", "cousin_brother", "bro", "stepbro", "older_brother", "younger_brother", "cousin_bro"]
     },
     {
       title: "Mom",
       filter: "rel_mom",
       mode: "multi_query",
-      xvideosQueries: ["mom", "mother", "stepmom", "stepmother", "mommy", "mama"],
-      rule34Tags: ["mother", "mom", "stepmother", "stepmom", "mommy", "mother_and_son"]
+      xvideosQueries: ["mom", "mother", "stepmom", "stepmother", "mommy", "mama", "cousin+mom", "cousin+mother"],
+      rule34Tags: ["mother", "mom", "stepmother", "stepmom", "mommy", "mother_and_son", "cousin_mom", "cousin_mother"]
     },
     {
       title: "Daughter",
       filter: "rel_daughter",
       mode: "multi_query",
-      xvideosQueries: ["daughter", "stepdaughter", "daddy+daughter"],
-      rule34Tags: ["daughter", "stepdaughter", "father_and_daughter", "mother_and_daughter"]
+      xvideosQueries: ["daughter", "stepdaughter", "daddy+daughter", "cousin+daughter"],
+      rule34Tags: ["daughter", "stepdaughter", "father_and_daughter", "mother_and_daughter", "cousin_daughter"]
     },
     {
       title: "Father",
       filter: "rel_father",
       mode: "multi_query",
-      xvideosQueries: ["father", "dad", "stepdad", "stepfather", "daddy"],
-      rule34Tags: ["father", "dad", "stepfather", "stepdad", "daddy"]
+      xvideosQueries: ["father", "dad", "stepdad", "stepfather", "daddy", "cousin+dad", "cousin+father"],
+      rule34Tags: ["father", "dad", "stepfather", "stepdad", "daddy", "cousin_dad", "cousin_father"]
     },
     {
       title: "Aunt",
       filter: "rel_aunt",
       mode: "multi_query",
-      xvideosQueries: ["aunt", "auntie", "aunty", "stepaunt"],
-      rule34Tags: ["aunt", "auntie", "aunty", "stepaunt", "aunt_and_nephew"]
+      xvideosQueries: ["aunt", "auntie", "aunty", "stepaunt", "cousin+aunt", "cousin+auntie"],
+      rule34Tags: ["aunt", "auntie", "aunty", "stepaunt", "aunt_and_nephew", "cousin_aunt", "cousin_auntie"]
     },
     {
       title: "Other",
       filter: "rel_other",
       mode: "multi_query",
-      xvideosQueries: ["cousin", "uncle", "niece", "nephew", "grandma", "granny", "mother+in+law", "sister+in+law"],
-      rule34Tags: ["cousin", "uncle", "niece", "nephew", "grandma", "granny", "mother-in-law", "sister-in-law"]
+      xvideosQueries: ["uncle", "niece", "nephew", "grandma", "granny", "mother+in+law", "sister+in+law"],
+      rule34Tags: ["uncle", "niece", "nephew", "grandma", "granny", "mother-in-law", "sister-in-law"]
     }
   ]
 };
+
+// providers/threeD.ts
+var THREE_D_TOGGLE_KEY = "only3D";
+var THREE_D_CACHE_KEY = "threeDCacheV1";
+var THREE_D_WARM_KEY = "threeDWarmV1";
+var THREE_D_TTL_MS = 36e5;
+var THREE_D_WARM_INTERVAL_MS = 36e5;
+var THREE_D_PAGE_SIZE = 60;
+var THREE_D_POOL_CAP = 600;
+var THREE_D_PHASE1_CAP = 300;
+var THREE_D_BUCKET_CAP = 120;
+var THREE_D_WAVE_SIZE = 5;
+var THREE_D_WAVE_GAP_MS = 400;
+var THREE_D_KEYWORDS = [
+  { kw: "3d", tier: 1 },
+  { kw: "cgi", tier: 1 },
+  { kw: "sfm", tier: 1 },
+  { kw: "mmd", tier: 1 },
+  { kw: "blender", tier: 1 },
+  { kw: "daz3d", tier: 1 },
+  { kw: "3d animation", tier: 1 },
+  { kw: "3d cartoon", tier: 1 },
+  { kw: "3d hentai", tier: 1 },
+  { kw: "vfx", tier: 2 },
+  { kw: "sfx", tier: 2 },
+  { kw: "fx", tier: 2 },
+  { kw: "animation", tier: 3 },
+  { kw: "cartoon", tier: 3 }
+];
+function sleep(ms) {
+  return new Promise(function(resolve) {
+    setTimeout(resolve, ms);
+  });
+}
+var is3DOn = async function(kvStore) {
+  if (!kvStore || typeof kvStore.get !== "function") return false;
+  try {
+    var raw = await kvStore.get(THREE_D_TOGGLE_KEY);
+    return raw === true || raw === 1 || raw === "true" || raw === "1";
+  } catch (e) {
+    return false;
+  }
+};
+function normalizeLink(link) {
+  if (!link || typeof link !== "string") return "";
+  try {
+    var u = new URL(link);
+    var path = u.pathname.replace(/\/+$/, "");
+    return (u.protocol + "//" + u.host.toLowerCase() + path).toLowerCase();
+  } catch (e) {
+    return String(link).split(/[?#]/)[0].replace(/\/+$/, "").toLowerCase();
+  }
+}
+function normalizeText(s) {
+  return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+function phraseIn(haystackNorm, termNorm) {
+  if (!termNorm) return false;
+  if (haystackNorm === termNorm) return true;
+  if (haystackNorm.indexOf(termNorm + " ") === 0) return true;
+  var endIdx = haystackNorm.lastIndexOf(" " + termNorm);
+  if (endIdx !== -1 && endIdx === haystackNorm.length - termNorm.length - 1) return true;
+  return haystackNorm.indexOf(" " + termNorm + " ") !== -1;
+}
+function buildCategoryTerms() {
+  var out = [];
+  var categories = categories_config_default && categories_config_default.categories || [];
+  for (var i = 0; i < categories.length; i++) {
+    var c = categories[i];
+    var terms = [];
+    var seen = {};
+    var push = function(t) {
+      var n = normalizeText(String(t).replace(/\+/g, " "));
+      if (n && !seen[n]) {
+        seen[n] = true;
+        terms.push(n);
+      }
+      var words = n ? n.split(" ") : [];
+      if (words.length > 0) {
+        var last = words[words.length - 1];
+        var plural = null;
+        if (last.length >= 3 && last.charAt(last.length - 1) !== "s") {
+          if (last.charAt(last.length - 1) === "y" && last.length >= 2 && "aeiou".indexOf(last.charAt(last.length - 2)) === -1) {
+            plural = last.slice(0, -1) + "ies";
+          } else {
+            plural = last + "s";
+          }
+        }
+        if (plural) {
+          words[words.length - 1] = plural;
+          var pn = words.join(" ");
+          if (!seen[pn]) {
+            seen[pn] = true;
+            terms.push(pn);
+          }
+        }
+      }
+    };
+    (c.xvideosQueries || []).forEach(push);
+    (c.rule34Tags || []).forEach(push);
+    if (c.filter === "family") {
+      push("family");
+      push("stepfamily");
+      push("step family");
+    }
+    if (c.filter === "rel_mom") {
+      push("milf");
+    }
+    if (c.filter === "incest") {
+      push("incest");
+      push("family");
+      push("stepfamily");
+      push("step family");
+    }
+    if (c.filter === "rel_sister") {
+      push("bigsis");
+      push("big sis");
+      push("lilsis");
+      push("lil sis");
+      push("little sis");
+      push("step sis");
+      push("cousin");
+      push("cousin sis");
+      push("cousin sister");
+      push("cousin stepsis");
+      push("cousin step sister");
+      push("cousin stepsister");
+      push("cousin step sis");
+    }
+    if (c.filter === "rel_brother") {
+      push("bigbro");
+      push("big bro");
+      push("lilbro");
+      push("lil bro");
+      push("little bro");
+      push("step bro");
+      push("cousin brother");
+      push("cousin bro");
+      push("cousin stepbrother");
+      push("cousin step brother");
+      push("cousin stepbro");
+      push("cousin step bro");
+    }
+    if (c.filter === "rel_mom") {
+      push("cousin mom");
+      push("cousin mother");
+      push("cousin stepmom");
+      push("cousin stepmother");
+    }
+    if (c.filter === "rel_daughter") {
+      push("cousin daughter");
+      push("cousin stepdaughter");
+    }
+    if (c.filter === "rel_father") {
+      push("cousin dad");
+      push("cousin father");
+      push("cousin stepdad");
+      push("cousin stepfather");
+      push("cousin daddy");
+    }
+    if (c.filter === "rel_aunt") {
+      push("cousin aunt");
+      push("cousin auntie");
+      push("cousin aunty");
+      push("cousin stepaunt");
+    }
+    var xvPrimary = c.filter === "family" ? "family" : c.xvideosQueries && c.xvideosQueries[0] || "";
+    var r34Primary = c.filter === "family" ? "family" : c.rule34Tags && c.rule34Tags[0] || "";
+    out.push({
+      filter: c.filter,
+      title: c.title,
+      terms,
+      xvPrimary: String(xvPrimary).replace(/\+/g, " "),
+      r34Primary: String(r34Primary)
+    });
+  }
+  return out;
+}
+var CATEGORY_TERMS = buildCategoryTerms();
+function isKnown3DFilter(filter) {
+  for (var i = 0; i < CATEGORY_TERMS.length; i++) {
+    if (CATEGORY_TERMS[i].filter === filter) return true;
+  }
+  return false;
+}
+var COUSIN_OTHER_PHRASES = [
+  "cousin brother",
+  "cousin bro",
+  "cousin stepbrother",
+  "cousin step brother",
+  "cousin stepbro",
+  "cousin step bro",
+  "cousin dad",
+  "cousin father",
+  "cousin stepdad",
+  "cousin stepfather",
+  "cousin daddy",
+  "cousin mom",
+  "cousin mother",
+  "cousin stepmom",
+  "cousin stepmother",
+  "cousin daughter",
+  "cousin stepdaughter",
+  "cousin aunt",
+  "cousin auntie",
+  "cousin aunty",
+  "cousin stepaunt",
+  "cousin uncle",
+  "cousin nephew",
+  "cousin niece",
+  "cousin son"
+];
+function hasCousinOtherPhrase(text) {
+  var norm = normalizeText(text);
+  if (!norm) return false;
+  for (var i = 0; i < COUSIN_OTHER_PHRASES.length; i++) {
+    if (phraseIn(norm, COUSIN_OTHER_PHRASES[i])) return true;
+  }
+  return false;
+}
+function matchesRelationWords(text, words, filter) {
+  var norm = normalizeText(text);
+  if (!norm) return false;
+  var skipBareCousin = filter === "rel_sister" && hasCousinOtherPhrase(norm);
+  for (var i = 0; i < words.length; i++) {
+    var term = normalizeText(words[i]);
+    if (!term) continue;
+    if (skipBareCousin && term === "cousin") continue;
+    if (phraseIn(norm, term)) return true;
+  }
+  return false;
+}
+function searchTermsFor(filter, site, maxN) {
+  var n = maxN || 3;
+  var categories = categories_config_default && categories_config_default.categories || [];
+  for (var i = 0; i < categories.length; i++) {
+    var c = categories[i];
+    if (c.filter !== filter) continue;
+    var raw = site === "xvideos" ? c.xvideosQueries || [] : c.rule34Tags || [];
+    var out = [];
+    var seen = {};
+    for (var j = 0; j < raw.length && out.length < n; j++) {
+      var t = String(raw[j] || "").replace(/\+/g, " ").trim();
+      if (!t) continue;
+      var key = t.toLowerCase();
+      if (seen[key]) continue;
+      seen[key] = true;
+      out.push(t);
+    }
+    return out;
+  }
+  return [];
+}
+function titleMatchesTerms(title, terms, filter) {
+  var norm = normalizeText(title);
+  if (!norm) return false;
+  var skipBareCousin = filter === "rel_sister" && hasCousinOtherPhrase(norm);
+  for (var i = 0; i < terms.length; i++) {
+    var term = terms[i];
+    if (skipBareCousin && term === "cousin") continue;
+    if (phraseIn(norm, term)) return true;
+  }
+  return false;
+}
+function classifyRelation(title, tagText) {
+  var out = [];
+  for (var i = 0; i < CATEGORY_TERMS.length; i++) {
+    var cat = CATEGORY_TERMS[i];
+    if (cat.filter === "homepage") continue;
+    if (cat.terms.length === 0) continue;
+    if (matchesRelationWords(title, cat.terms, cat.filter) || matchesRelationWords(tagText, cat.terms, cat.filter)) {
+      out.push(cat.filter);
+    }
+  }
+  return out;
+}
+function leanPost(post) {
+  return {
+    title: post.title || "",
+    link: post.link || "",
+    image: post.image || "",
+    tag: post.tag,
+    cornerTag: post.cornerTag,
+    _dur: post._dur || 0
+  };
+}
+function dedupePosts(posts) {
+  var seen = {};
+  var out = [];
+  for (var i = 0; i < posts.length; i++) {
+    var p = posts[i];
+    if (!p || !p.link) continue;
+    var key = normalizeLink(p.link);
+    if (!key || seen[key]) continue;
+    seen[key] = true;
+    out.push(p);
+  }
+  return out;
+}
+function keepLongEnough(posts) {
+  return posts.filter(function(p) {
+    var d = p && p._dur || 0;
+    return d === 0 || d >= 120;
+  });
+}
+function bucketize(pool, categoryHits) {
+  var buckets = {};
+  for (var i = 0; i < CATEGORY_TERMS.length; i++) {
+    buckets[CATEGORY_TERMS[i].filter] = [];
+  }
+  var poolKeys = {};
+  for (var p = 0; p < pool.length; p++) {
+    poolKeys[normalizeLink(pool[p].link)] = p;
+  }
+  if (categoryHits) {
+    for (var f in categoryHits) {
+      if (!buckets[f]) continue;
+      var hits = categoryHits[f] || [];
+      for (var h = 0; h < hits.length; h++) {
+        var idx = poolKeys[normalizeLink(hits[h].link)];
+        if (idx !== void 0 && buckets[f].indexOf(idx) === -1 && buckets[f].length < THREE_D_BUCKET_CAP) {
+          buckets[f].push(idx);
+        }
+      }
+    }
+  }
+  for (var p2 = 0; p2 < pool.length; p2++) {
+    var post = pool[p2];
+    for (var c = 0; c < CATEGORY_TERMS.length; c++) {
+      var cat = CATEGORY_TERMS[c];
+      if (cat.filter === "homepage") continue;
+      if (cat.terms.length === 0) continue;
+      if (buckets[cat.filter].length >= THREE_D_BUCKET_CAP) continue;
+      if (buckets[cat.filter].indexOf(p2) !== -1) continue;
+      if (titleMatchesTerms(post.title, cat.terms, cat.filter)) {
+        buckets[cat.filter].push(p2);
+      }
+    }
+  }
+  buckets["homepage"] = pool.map(function(_, idx2) {
+    return idx2;
+  });
+  return { pool, buckets };
+}
+var read3DCache = async function(kvStore) {
+  if (!kvStore || typeof kvStore.get !== "function") return null;
+  try {
+    var raw = await kvStore.get(THREE_D_CACHE_KEY);
+    var cached = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!cached || !cached.pool || !cached.buckets) return null;
+    if (!cached.expiresAt || cached.expiresAt <= Date.now()) return null;
+    return cached;
+  } catch (e) {
+    return null;
+  }
+};
+var write3DCache = async function(kvStore, pool, buckets) {
+  if (!kvStore || typeof kvStore.set !== "function") return false;
+  try {
+    var payload = JSON.stringify({
+      expiresAt: Date.now() + THREE_D_TTL_MS,
+      pool,
+      buckets
+    });
+    if (payload.length > 9e5) return false;
+    await kvStore.set(THREE_D_CACHE_KEY, payload);
+    return true;
+  } catch (e) {
+    return false;
+  }
+};
+var sweep3D = async function(fetchGrid, fetchCategory3D, fetchRelationPool) {
+  var pool = [];
+  for (var w = 0; w < THREE_D_KEYWORDS.length; w += THREE_D_WAVE_SIZE) {
+    var wave = THREE_D_KEYWORDS.slice(w, w + THREE_D_WAVE_SIZE);
+    var results = await Promise.all(
+      wave.map(function(entry) {
+        return Promise.resolve().then(function() {
+          return fetchGrid(entry.kw);
+        }).catch(function() {
+          return [];
+        });
+      })
+    );
+    for (var i = 0; i < results.length; i++) {
+      var list = results[i] || [];
+      for (var j = 0; j < list.length; j++) pool.push(list[j]);
+    }
+    if (w + THREE_D_WAVE_SIZE < THREE_D_KEYWORDS.length) {
+      await sleep(THREE_D_WAVE_GAP_MS);
+    }
+  }
+  pool = dedupePosts(pool);
+  pool = keepLongEnough(pool);
+  pool = pool.slice(0, THREE_D_PHASE1_CAP).map(leanPost);
+  var categoryHits = {};
+  if (typeof fetchCategory3D === "function" && pool.length > 0) {
+    var filters = [];
+    for (var c = 0; c < CATEGORY_TERMS.length; c++) {
+      if (CATEGORY_TERMS[c].filter !== "homepage") filters.push(CATEGORY_TERMS[c].filter);
+    }
+    for (var w2 = 0; w2 < filters.length; w2 += THREE_D_WAVE_SIZE) {
+      var wave2 = filters.slice(w2, w2 + THREE_D_WAVE_SIZE);
+      var catResults = await Promise.all(
+        wave2.map(function(filter) {
+          return Promise.resolve().then(function() {
+            return fetchCategory3D(filter, pool);
+          }).catch(function() {
+            return [];
+          });
+        })
+      );
+      for (var k = 0; k < wave2.length; k++) {
+        categoryHits[wave2[k]] = dedupePosts(keepLongEnough(catResults[k] || []));
+      }
+      if (w2 + THREE_D_WAVE_SIZE < filters.length) {
+        await sleep(THREE_D_WAVE_GAP_MS);
+      }
+    }
+    if (typeof fetchRelationPool === "function") {
+      try {
+        var relationHits = await fetchRelationPool(pool);
+        if (relationHits) {
+          for (var rf in relationHits) {
+            var existing = categoryHits[rf] || [];
+            categoryHits[rf] = dedupePosts(
+              keepLongEnough(existing.concat(relationHits[rf] || []))
+            );
+          }
+        }
+      } catch (e) {
+      }
+    }
+    var poolKeys = {};
+    for (var p = 0; p < pool.length; p++) poolKeys[normalizeLink(pool[p].link)] = true;
+    var hitLists = [];
+    for (var f3 in categoryHits) {
+      var dedupedHits = [];
+      var hitSeen = {};
+      (categoryHits[f3] || []).forEach(function(h) {
+        var k2 = normalizeLink(h.link);
+        if (!k2 || hitSeen[k2] || poolKeys[k2]) return;
+        hitSeen[k2] = true;
+        dedupedHits.push(h);
+      });
+      if (dedupedHits.length > 0) hitLists.push(dedupedHits);
+    }
+    var maxHits = 0;
+    for (var hl = 0; hl < hitLists.length; hl++) maxHits = Math.max(maxHits, hitLists[hl].length);
+    for (var hi = 0; hi < maxHits && pool.length < THREE_D_POOL_CAP; hi++) {
+      for (var hj = 0; hj < hitLists.length && pool.length < THREE_D_POOL_CAP; hj++) {
+        var hit = hitLists[hj][hi];
+        if (!hit) continue;
+        var key = normalizeLink(hit.link);
+        if (!key || poolKeys[key]) continue;
+        poolKeys[key] = true;
+        pool.push(leanPost(hit));
+      }
+    }
+  }
+  return { pool, categoryHits };
+};
+var ensure3DPool = async function(ctx) {
+  var kvStore = ctx && ctx.kvStore;
+  var fetchGrid = ctx && ctx.fetchGrid;
+  var fetchCategory3D = ctx && ctx.fetchCategory3D;
+  var fetchRelationPool = ctx && ctx.fetchRelationPool;
+  if (typeof fetchGrid !== "function") return null;
+  try {
+    var cached = await read3DCache(kvStore);
+    if (cached) return cached;
+    var swept = await sweep3D(fetchGrid, fetchCategory3D, fetchRelationPool);
+    if (!swept || !swept.pool || swept.pool.length === 0) return null;
+    var built = bucketize(swept.pool, swept.categoryHits);
+    await write3DCache(kvStore, built.pool, built.buckets);
+    return built;
+  } catch (e) {
+    return null;
+  }
+};
+var warm3DInBackground = function(ctx) {
+  var kvStore = ctx && ctx.kvStore;
+  if (!kvStore || typeof kvStore.get !== "function") return Promise.resolve(false);
+  return Promise.resolve().then(function() {
+    return kvStore.get(THREE_D_WARM_KEY);
+  }).catch(function() {
+    return 0;
+  }).then(function(lastWarm) {
+    var last = typeof lastWarm === "number" ? lastWarm : parseInt(lastWarm, 10) || 0;
+    if (Date.now() - last < THREE_D_WARM_INTERVAL_MS) return false;
+    return Promise.resolve().then(function() {
+      return kvStore.set(THREE_D_WARM_KEY, Date.now());
+    }).catch(function() {
+    }).then(function() {
+      return ensure3DPool(ctx);
+    }).then(function() {
+      return true;
+    }).catch(function() {
+      return false;
+    });
+  });
+};
+function getBucketPosts(cached, filter, page) {
+  if (!cached || !cached.pool || !cached.buckets) return null;
+  if (!isKnown3DFilter(filter)) return null;
+  var indices = cached.buckets[filter];
+  if (!Array.isArray(indices)) return null;
+  var pageNum = Math.max(1, page || 1);
+  var start = (pageNum - 1) * THREE_D_PAGE_SIZE;
+  var slice = indices.slice(start, start + THREE_D_PAGE_SIZE);
+  var out = [];
+  for (var i = 0; i < slice.length; i++) {
+    var post = cached.pool[slice[i]];
+    if (post) out.push(post);
+  }
+  return out;
+}
+function intersectWithPool(posts, cached) {
+  if (!cached || !cached.pool) return posts || [];
+  var poolKeys = {};
+  for (var i = 0; i < cached.pool.length; i++) {
+    poolKeys[normalizeLink(cached.pool[i].link)] = true;
+  }
+  return (posts || []).filter(function(p) {
+    return p && p.link && poolKeys[normalizeLink(p.link)];
+  });
+}
+function poolCategorySearch(cached, query) {
+  if (!cached || !cached.pool || !cached.buckets) return [];
+  var out = [];
+  for (var i = 0; i < CATEGORY_TERMS.length; i++) {
+    var cat = CATEGORY_TERMS[i];
+    if (cat.filter === "homepage") continue;
+    if (cat.terms.length === 0) continue;
+    if (!titleMatchesTerms(query, cat.terms, cat.filter)) continue;
+    var idxs = cached.buckets[cat.filter] || [];
+    for (var j = 0; j < idxs.length; j++) {
+      var post = cached.pool[idxs[j]];
+      if (post) out.push(post);
+    }
+  }
+  return out;
+}
+function poolTitleSearch(cached, query) {
+  if (!cached || !cached.pool) return [];
+  var q = normalizeText(query);
+  if (!q) return [];
+  return cached.pool.filter(function(p) {
+    return p && p.title && phraseIn(normalizeText(p.title), q);
+  });
+}
+function titleMatchesAnyKeyword(title) {
+  var norm = normalizeText(title);
+  if (!norm) return false;
+  for (var i = 0; i < THREE_D_KEYWORDS.length; i++) {
+    if (phraseIn(norm, normalizeText(THREE_D_KEYWORDS[i].kw))) return true;
+  }
+  return false;
+}
+
+// providers/series.ts
+function normalizeBase(text) {
+  return String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+function wordCount(text) {
+  var n = normalizeBase(text);
+  return n ? n.split(" ").length : 0;
+}
+function stripTrailingDuration(title) {
+  return String(title || "").replace(/\s+\d{1,2}:\d{2}\s*$/, "").replace(/\s+\d+\s*min\s*$/i, "").trim();
+}
+function isYearLike(num) {
+  return Number.isInteger(num) && num >= 1900 && num <= 2100;
+}
+function parsePartTitle(title) {
+  var clean = stripTrailingDuration(title);
+  if (!clean) return null;
+  var m;
+  m = clean.match(/^(.*?)\s*[-–—:]?\s*minus\s+(\d+(?:\.\d+)?)\s*(.*)$/i);
+  if (m && wordCount(m[1]) >= 2) {
+    var minusBase = m[1].trim().replace(/[-–—:]+$/, "").trim();
+    if (minusBase && wordCount(minusBase) >= 2) {
+      return {
+        base: minusBase,
+        baseKey: normalizeBase(minusBase),
+        partNum: null,
+        partLabel: "Minus " + m[2],
+        subtitle: (m[3] || "").trim()
+      };
+    }
+  }
+  m = clean.match(
+    /^(.*?)\s*[-–—:]?\s*(?:part|pt\.?|episode|ep\.?|chapter|ch\.?)\s*(\d+(?:\.\d+)?)\b\s*(.*)$/i
+  );
+  if (m) {
+    var base1 = m[1].trim().replace(/[-–—:]+$/, "").trim();
+    var num1 = parseFloat(m[2]);
+    if (base1 && wordCount(base1) >= 2 && num1 < 1e3) {
+      return {
+        base: base1,
+        baseKey: normalizeBase(base1),
+        partNum: num1,
+        partLabel: "Part " + m[2],
+        subtitle: (m[3] || "").trim()
+      };
+    }
+  }
+  m = clean.match(/^(.*?)\s*[-–—]\s*(\d+(?:\.\d+)?)\b\s*(.*)$/);
+  if (m) {
+    var base2 = m[1].trim();
+    var num2 = parseFloat(m[2]);
+    if (base2 && wordCount(base2) >= 2 && num2 < 1e3 && !isYearLike(num2)) {
+      return {
+        base: base2,
+        baseKey: normalizeBase(base2),
+        partNum: num2,
+        partLabel: "Part " + m[2],
+        subtitle: (m[3] || "").trim()
+      };
+    }
+  }
+  m = clean.match(/^(.*?)\s+(\d+(?:\.\d+)?)\s*[-–—]?\s*(.*)$/);
+  if (m) {
+    var base3 = m[1].trim();
+    var num3 = parseFloat(m[2]);
+    if (base3 && wordCount(base3) >= 2 && num3 < 1e3 && !isYearLike(num3)) {
+      return {
+        base: base3,
+        baseKey: normalizeBase(base3),
+        partNum: num3,
+        partLabel: "Part " + m[2],
+        subtitle: (m[3] || "").trim()
+      };
+    }
+  }
+  return null;
+}
+function naturalCompare(a, b) {
+  var ax = String(a || "").toLowerCase().match(/(\d+(?:\.\d+)?|\D+)/g) || [];
+  var bx = String(b || "").toLowerCase().match(/(\d+(?:\.\d+)?|\D+)/g) || [];
+  var len = Math.max(ax.length, bx.length);
+  for (var i = 0; i < len; i++) {
+    var x = ax[i] || "";
+    var y = bx[i] || "";
+    if (x === y) continue;
+    var nx = parseFloat(x);
+    var ny = parseFloat(y);
+    if (!isNaN(nx) && !isNaN(ny)) return nx - ny;
+    return x < y ? -1 : 1;
+  }
+  return 0;
+}
+function sortParts(parts) {
+  return parts.slice().sort(function(a, b) {
+    var an = a.partNum;
+    var bn = b.partNum;
+    if (an != null && bn != null && an !== bn) return an - bn;
+    if (an != null && bn == null) return -1;
+    if (an == null && bn != null) return 1;
+    return naturalCompare(a.title || "", b.title || "");
+  });
+}
+function groupSeriesPosts(posts) {
+  var input = Array.isArray(posts) ? posts : [];
+  if (input.length === 0) return [];
+  var groups = {};
+  var groupOrder = [];
+  var singles = [];
+  var parsedByIndex = [];
+  for (var i = 0; i < input.length; i++) {
+    var p = input[i];
+    var parsed = p && p.title ? parsePartTitle(p.title) : null;
+    parsedByIndex.push(parsed);
+    if (parsed && parsed.partNum != null) {
+      var key = parsed.baseKey;
+      if (!groups[key]) {
+        groups[key] = { base: parsed.base, baseKey: key, parts: [], firstIndex: i };
+        groupOrder.push(key);
+      }
+      groups[key].parts.push({
+        title: p.title,
+        link: p.link,
+        image: p.image,
+        tag: p.tag,
+        cornerTag: p.cornerTag,
+        _dur: p._dur || 0,
+        partNum: parsed.partNum,
+        partLabel: parsed.partLabel,
+        subtitle: parsed.subtitle,
+        index: i
+      });
+    } else {
+      singles.push({ post: p, index: i, parsed });
+    }
+  }
+  var liveGroups = {};
+  for (var g = 0; g < groupOrder.length; g++) {
+    var grp = groups[groupOrder[g]];
+    if (grp.parts.length >= 2) {
+      liveGroups[grp.baseKey] = grp;
+    } else {
+      for (var q = 0; q < grp.parts.length; q++) {
+        var solo = grp.parts[q];
+        singles.push({ post: input[solo.index], index: solo.index, parsed: parsedByIndex[solo.index] });
+      }
+    }
+  }
+  var attached = {};
+  var remainingSingles = [];
+  for (var s = 0; s < singles.length; s++) {
+    var entry = singles[s];
+    var post = entry.post;
+    var titleNorm = normalizeBase(post && post.title);
+    var joined = null;
+    var joinLabel = null;
+    if (titleNorm) {
+      for (var k in liveGroups) {
+        var lg = liveGroups[k];
+        if (titleNorm === lg.baseKey) continue;
+        if (titleNorm.indexOf(lg.baseKey + " ") === 0) {
+          var rest = titleNorm.slice(lg.baseKey.length).trim();
+          var restWords = rest ? rest.split(" ").length : 0;
+          if (restWords >= 1 && restWords <= 6) {
+            joined = lg;
+            joinLabel = entry.parsed && entry.parsed.partLabel ? entry.parsed.partLabel : rest.split(" ").map(function(w) {
+              return w.charAt(0).toUpperCase() + w.slice(1);
+            }).join(" ");
+            break;
+          }
+        }
+      }
+    }
+    if (joined) {
+      joined.parts.push({
+        title: post.title,
+        link: post.link,
+        image: post.image,
+        tag: post.tag,
+        cornerTag: post.cornerTag,
+        _dur: post._dur || 0,
+        partNum: null,
+        partLabel: joinLabel,
+        subtitle: "",
+        index: entry.index
+      });
+      attached[entry.index] = true;
+    } else {
+      remainingSingles.push(entry);
+    }
+  }
+  var out = [];
+  var emittedGroups = {};
+  var singleByIndex = {};
+  for (var r = 0; r < remainingSingles.length; r++) {
+    singleByIndex[remainingSingles[r].index] = remainingSingles[r].post;
+  }
+  for (var i2 = 0; i2 < input.length; i2++) {
+    if (singleByIndex[i2] !== void 0) {
+      out.push(singleByIndex[i2]);
+      continue;
+    }
+    if (attached[i2]) continue;
+    var parsed2 = parsedByIndex[i2];
+    if (parsed2 && parsed2.partNum != null && liveGroups[parsed2.baseKey]) {
+      var lg2 = liveGroups[parsed2.baseKey];
+      if (emittedGroups[lg2.baseKey]) continue;
+      emittedGroups[lg2.baseKey] = true;
+      var sorted = sortParts(lg2.parts);
+      var first = sorted[0];
+      var card = {
+        title: first.title,
+        link: first.link,
+        image: first.image,
+        tag: first.tag,
+        _dur: first._dur || 0,
+        cornerTag: sorted.length + " parts"
+      };
+      out.push(card);
+      continue;
+    }
+    out.push(input[i2]);
+  }
+  return out;
+}
 
 // providers/xvideos/posts.ts
 var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
@@ -234,17 +1025,35 @@ async function parseVideoGrid(options) {
   var signal = options.signal;
   var kvStore = options.kvStore;
   try {
-    var res = await axios.get(url, {
-      timeout: 12e3,
-      headers: Object.assign({}, commonHeaders, {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Referer: baseUrl + "/",
-        Origin: baseUrl,
-        Accept: "*/*"
-      }),
-      signal,
-      maxRedirects: 5
-    });
+    var res = null;
+    var lastErr = null;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        res = await axios.get(url, {
+          timeout: 12e3,
+          headers: Object.assign({}, commonHeaders, {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            Referer: baseUrl + "/",
+            Origin: baseUrl,
+            Accept: "*/*"
+          }),
+          signal,
+          maxRedirects: 5
+        });
+        break;
+      } catch (e) {
+        lastErr = e;
+        var status = e && e.response && e.response.status;
+        if (status === 429 && attempt === 0) {
+          await new Promise(function(resolve) {
+            setTimeout(resolve, 2500);
+          });
+          continue;
+        }
+        throw e;
+      }
+    }
+    if (!res) throw lastErr || new Error("no response");
     updateLearnedDomain(res, baseUrl, kvStore);
     var html = res.data;
     var $ = cheerio.load(html);
@@ -311,7 +1120,134 @@ function getCategory(filter) {
     return category.filter === filter;
   });
 }
-var getPosts = async function(params) {
+function build3DContext(opts) {
+  return {
+    kvStore: opts.kvStore,
+    fetchGrid: function(keyword) {
+      var targetUrl = opts.baseUrl + "/?k=" + encodeURIComponent(keyword) + "&p=0";
+      return parseVideoGrid({
+        url: targetUrl,
+        baseUrl: opts.baseUrl,
+        axios: opts.axios,
+        cheerio: opts.cheerio,
+        commonHeaders: opts.commonHeaders,
+        signal: opts.signal,
+        kvStore: opts.kvStore
+      });
+    },
+    // Phase 2 of the sweep: "<term> 3d" + "<term> sfm" for MULTIPLE
+    // terms per category (user, 2026-11-18): the plain word, the
+    // step- form, then the cousin form — e.g. Sister searches
+    // "sister", "stepsister" and "cousin". One term alone misses
+    // videos the others find. XVideos keyword search is full-text
+    // AND, so these results are trustworthy directly — the site
+    // matched both the category and 3D. The grids are fetched
+    // SEQUENTIALLY with an 800ms gap: XVideos answers 429 when
+    // searches are hammered (3 x 429 in the first multi-term run),
+    // and the sweep already runs 5 categories at once.
+    fetchCategory3D: async function(filter, pool) {
+      var terms = searchTermsFor(filter, "xvideos", 3);
+      if (terms.length === 0) return [];
+      var perTerm = [];
+      for (var ti = 0; ti < terms.length; ti++) {
+        var termResults = [];
+        for (var ki = 0; ki < 2; ki++) {
+          var kw = ki === 0 ? "3d" : "sfm";
+          var targetUrl = opts.baseUrl + "/?k=" + encodeURIComponent(terms[ti] + " " + kw) + "&p=0";
+          try {
+            var grid = await parseVideoGrid({
+              url: targetUrl,
+              baseUrl: opts.baseUrl,
+              axios: opts.axios,
+              cheerio: opts.cheerio,
+              commonHeaders: opts.commonHeaders,
+              signal: opts.signal,
+              kvStore: opts.kvStore
+            });
+            (grid || []).forEach(function(p) {
+              termResults.push(p);
+            });
+          } catch (e) {
+          }
+          if (ti < terms.length - 1 || ki === 0) {
+            await new Promise(function(resolve) {
+              setTimeout(resolve, 800);
+            });
+          }
+        }
+        perTerm.push(termResults);
+      }
+      var out = [];
+      var maxLen = 0;
+      for (var t = 0; t < perTerm.length; t++) maxLen = Math.max(maxLen, perTerm[t].length);
+      for (var i = 0; i < maxLen; i++) {
+        for (var t2 = 0; t2 < perTerm.length; t2++) {
+          if (perTerm[t2][i]) out.push(perTerm[t2][i]);
+        }
+      }
+      return out;
+    },
+    // Phase 2b of the sweep: the relation pool. Most relation videos
+    // carry an incest or family tag, so search "taboo 3d" /
+    // "taboo sfm" / "stepfamily 3d" / "family 3d" / "cousin 3d" /
+    // "cousin sfm" and classify each hit by its relation words
+    // (title only — XV cards carry no tags). XVideos search is
+    // full-text AND, so a hit here is incest, family or cousin
+    // content by the site's own index; a hit with no specific
+    // relation word in the title belongs to Incest. The cousin
+    // searches are here too (user, 2026-11-18): a "cousin sis"
+    // search can surface a "cousin brother" video, and the classify
+    // step below picks it up into Brother — nothing found is
+    // dropped just because it was found by another category's
+    // search. Returns { filter: [posts] }.
+    fetchRelationPool: async function(pool) {
+      var queries = ["taboo 3d", "taboo sfm", "stepfamily 3d", "stepfamily sfm", "family 3d", "family sfm", "cousin 3d", "cousin sfm"];
+      var groups = [];
+      for (var qi = 0; qi < queries.length; qi++) {
+        var targetUrl = opts.baseUrl + "/?k=" + encodeURIComponent(queries[qi]) + "&p=0";
+        try {
+          var g = await parseVideoGrid({
+            url: targetUrl,
+            baseUrl: opts.baseUrl,
+            axios: opts.axios,
+            cheerio: opts.cheerio,
+            commonHeaders: opts.commonHeaders,
+            signal: opts.signal,
+            kvStore: opts.kvStore
+          });
+          groups.push(g || []);
+        } catch (e) {
+          groups.push([]);
+        }
+        if (qi < queries.length - 1) {
+          await new Promise(function(resolve) {
+            setTimeout(resolve, 800);
+          });
+        }
+      }
+      var out = {};
+      groups.forEach(function(g2) {
+        (g2 || []).forEach(function(p) {
+          if (!p || !p.link) return;
+          if (!titleMatchesAnyKeyword(p.title) && classifyRelation(p.title, "").length === 0) return;
+          var filters = classifyRelation(p.title, "");
+          if (filters.length === 0) filters = ["incest"];
+          filters.forEach(function(f) {
+            if (!out[f]) out[f] = [];
+            out[f].push(p);
+          });
+        });
+      });
+      return out;
+    }
+  };
+}
+async function get3DPostsForFilter(ctx, filter, page) {
+  var cached = await ensure3DPool(ctx);
+  if (!cached) return null;
+  return getBucketPosts(cached, filter, page);
+}
+var getPostsImpl = async function(params) {
   var filter = params.filter;
   var page = params.page;
   var signal = params.signal;
@@ -322,6 +1258,20 @@ var getPosts = async function(params) {
   var kvStore = providerContext.kvStore;
   var baseUrl = await getBase(kvStore, axios);
   var category = getCategory(filter);
+  var threeDContext = build3DContext({
+    baseUrl,
+    axios,
+    cheerio,
+    commonHeaders,
+    signal,
+    kvStore
+  });
+  if (await is3DOn(kvStore)) {
+    var threeDPosts = await get3DPostsForFilter(threeDContext, filter, page);
+    if (threeDPosts) return threeDPosts;
+  } else if (page <= 1) {
+    warm3DInBackground(threeDContext);
+  }
   if (category && category.mode === "keep_existing") {
     var pNum = page > 1 ? page - 1 : 0;
     var fUrl = pNum > 0 ? baseUrl + "/?k=family&sort=length&p=" + pNum : baseUrl + "/?k=family&sort=length";
@@ -421,7 +1371,11 @@ var getPosts = async function(params) {
     kvStore
   });
 };
-var getSearchPosts = async function(params) {
+var getPosts = async function(params) {
+  var posts = await getPostsImpl(params);
+  return groupSeriesPosts(posts || []);
+};
+var getSearchPostsImpl = async function(params) {
   var searchQuery = params.searchQuery;
   var page = params.page;
   var signal = params.signal;
@@ -433,6 +1387,51 @@ var getSearchPosts = async function(params) {
   var baseUrl = await getBase(kvStore, axios);
   var pageIndex = Math.max(0, page - 1);
   var targetUrl = baseUrl + "/?k=" + encodeURIComponent(searchQuery) + "&p=" + pageIndex;
+  if (await is3DOn(kvStore)) {
+    var threeDContext = build3DContext({
+      baseUrl,
+      axios,
+      cheerio,
+      commonHeaders,
+      signal,
+      kvStore
+    });
+    var cached = await ensure3DPool(threeDContext);
+    var plain = await parseVideoGrid({
+      url: targetUrl,
+      baseUrl,
+      axios,
+      cheerio,
+      commonHeaders,
+      signal,
+      kvStore
+    });
+    var matched = cached ? intersectWithPool(plain, cached) : plain.filter(function(p) {
+      return titleMatchesAnyKeyword(p.title);
+    });
+    var direct = await parseVideoGrid({
+      url: baseUrl + "/?k=" + encodeURIComponent(searchQuery + " 3d") + "&p=" + pageIndex,
+      baseUrl,
+      axios,
+      cheerio,
+      commonHeaders,
+      signal,
+      kvStore
+    });
+    var merged = dedupePosts(
+      keepLongEnough(
+        matched.concat(
+          direct,
+          cached ? poolTitleSearch(cached, searchQuery) : [],
+          cached ? poolCategorySearch(cached, searchQuery) : []
+        )
+      )
+    );
+    merged.sort(function(a, b) {
+      return compareTitle(a.title || "", b.title || "");
+    });
+    return merged.slice(0, 60);
+  }
   return parseVideoGrid({
     url: targetUrl,
     baseUrl,
@@ -442,4 +1441,8 @@ var getSearchPosts = async function(params) {
     signal,
     kvStore
   });
+};
+var getSearchPosts = async function(params) {
+  var posts = await getSearchPostsImpl(params);
+  return groupSeriesPosts(posts || []);
 };
