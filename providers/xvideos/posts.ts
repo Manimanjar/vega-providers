@@ -1,5 +1,20 @@
 import { Post, ProviderContext } from "../types";
 import config from "../categories.config.json";
+import {
+  is3DOn,
+  ensure3DPool,
+  warm3DInBackground,
+  getBucketPosts,
+  intersectWithPool,
+  poolTitleSearch,
+  poolCategorySearch,
+  primaryTermFor,
+  titleMatchesAnyKeyword,
+  classifyRelation,
+  dedupePosts,
+  keepLongEnough,
+} from "../threeD";
+import { groupSeriesPosts } from "../series";
 
 "use strict";
 
@@ -278,7 +293,111 @@ function getCategory(filter) {
   });
 }
 
-export const getPosts = async function (params) {
+// 3D-only mode: the sweep searches each 3D keyword on XVideos
+// (/?k=<keyword>) and the shared engine buckets the results into the
+// 10 categories. See providers/threeD.ts for the full design.
+function build3DContext(opts) {
+  return {
+    kvStore: opts.kvStore,
+    fetchGrid: function (keyword) {
+      var targetUrl = opts.baseUrl + "/?k=" + encodeURIComponent(keyword) + "&p=0";
+      return parseVideoGrid({
+        url: targetUrl,
+        baseUrl: opts.baseUrl,
+        axios: opts.axios,
+        cheerio: opts.cheerio,
+        commonHeaders: opts.commonHeaders,
+        signal: opts.signal,
+        kvStore: opts.kvStore,
+      });
+    },
+    // Phase 2 of the sweep: "<category> 3d" + "<category> sfm".
+    // XVideos keyword search is full-text AND, so these results are
+    // trustworthy directly — the site matched both the category and 3D.
+    fetchCategory3D: function (filter, pool) {
+      var term = primaryTermFor(filter, "xvideos");
+      if (!term) return Promise.resolve([]);
+      var grids = ["3d", "sfm"].map(function (kw) {
+        var targetUrl =
+          opts.baseUrl + "/?k=" + encodeURIComponent(term + " " + kw) + "&p=0";
+        return parseVideoGrid({
+          url: targetUrl,
+          baseUrl: opts.baseUrl,
+          axios: opts.axios,
+          cheerio: opts.cheerio,
+          commonHeaders: opts.commonHeaders,
+          signal: opts.signal,
+          kvStore: opts.kvStore,
+        });
+      });
+      return Promise.all(grids).then(function (groups) {
+        var out = [];
+        groups.forEach(function (g) {
+          (g || []).forEach(function (p) {
+            out.push(p);
+          });
+        });
+        return out;
+      });
+    },
+    // Phase 2b of the sweep: the relation pool. Most relation videos
+    // carry an incest or family tag, so search "incest 3d" /
+    // "incest sfm" / "family 3d" / "family sfm" and classify each hit
+    // by its relation words (title only — XV cards carry no tags).
+    // XVideos search is full-text AND, so a hit here is incest or
+    // family content by the site's own index; a hit with no specific
+    // relation word in the title belongs to Incest. Returns
+    // { filter: [posts] }.
+    fetchRelationPool: async function (pool) {
+      // NOTE (2026-11-18): XVideos returns HTTP 404 for ANY search
+      // containing the word "incest" — including "incest 3d" and the
+      // /tags/incest page — while "taboo", "stepfamily", "stepmom"
+      // and "stepsister" all return 200 with the same content.
+      // So the incest legs use the site's own synonyms (taboo,
+      // stepfamily) instead of the blocked word. The classify step
+      // still matches "incest" in titles (that is matching, not
+      // searching, so the block does not apply).
+      var queries = ["taboo 3d", "taboo sfm", "stepfamily 3d", "stepfamily sfm", "family 3d", "family sfm"];
+      var grids = queries.map(function (q) {
+        var targetUrl = opts.baseUrl + "/?k=" + encodeURIComponent(q) + "&p=0";
+        return parseVideoGrid({
+          url: targetUrl,
+          baseUrl: opts.baseUrl,
+          axios: opts.axios,
+          cheerio: opts.cheerio,
+          commonHeaders: opts.commonHeaders,
+          signal: opts.signal,
+          kvStore: opts.kvStore,
+        }).catch(function () {
+          return [];
+        });
+      });
+      var groups = await Promise.all(grids);
+      var out = {};
+      groups.forEach(function (g) {
+        (g || []).forEach(function (p) {
+          if (!p || !p.link) return;
+          if (!titleMatchesAnyKeyword(p.title)) return;
+          var filters = classifyRelation(p.title, "");
+          if (filters.length === 0) filters = ["incest"];
+          filters.forEach(function (f) {
+            if (!out[f]) out[f] = [];
+            out[f].push(p);
+          });
+        });
+      });
+      return out;
+    },
+  };
+}
+
+async function get3DPostsForFilter(ctx, filter, page) {
+  var cached = await ensure3DPool(ctx);
+  if (!cached) return null;
+  return getBucketPosts(cached, filter, page);
+}
+
+const getPostsImpl = async function (params) {
   var filter = params.filter;
   var page = params.page;
   var signal = params.signal;
@@ -291,6 +410,27 @@ export const getPosts = async function (params) {
 
   var baseUrl = await getBase(kvStore, axios);
   var category = getCategory(filter);
+
+  // 3D-only mode ("3D content only" toggle in the provider settings):
+  // the same 10 categories, only 3D / animation content inside them.
+  // The pool is swept once and cached for an hour; while the toggle is
+  // OFF the cache is warmed in the background (at most once an hour)
+  // so turning it on feels instant. If the pool is unavailable the
+  // normal feed is served instead — never a black screen.
+  var threeDContext = build3DContext({
+    baseUrl: baseUrl,
+    axios: axios,
+    cheerio: cheerio,
+    commonHeaders: commonHeaders,
+    signal: signal,
+    kvStore: kvStore,
+  });
+  if (await is3DOn(kvStore)) {
+    var threeDPosts = await get3DPostsForFilter(threeDContext, filter, page);
+    if (threeDPosts) return threeDPosts;
+  } else if (page <= 1) {
+    warm3DInBackground(threeDContext);
+  }
 
   if (category && category.mode === "keep_existing") {
     var pNum = page > 1 ? page - 1 : 0;
@@ -429,7 +569,16 @@ export const getPosts = async function (params) {
   });
 };
 
-export const getSearchPosts = async function (params) {
+// Parts grouping is applied here, once, to every list this provider
+// returns (normal feed, 3D buckets, search) — parts of one video
+// become one card (first part's thumbnail and title, badge "N parts")
+// and the rest are reachable from its detail. See providers/series.ts.
+export const getPosts = async function (params) {
+  var posts = await getPostsImpl(params);
+  return groupSeriesPosts(posts || []);
+};
+
+const getSearchPostsImpl = async function (params) {
   var searchQuery = params.searchQuery;
   var page = params.page;
   var signal = params.signal;
@@ -444,6 +593,58 @@ export const getSearchPosts = async function (params) {
   var pageIndex = Math.max(0, page - 1);
   var targetUrl = baseUrl + "/?k=" + encodeURIComponent(searchQuery) + "&p=" + pageIndex;
 
+  // 3D-only mode: keep the query's results that are also in the
+  // verified 3D pool, plus a direct "<query> 3d" search (XVideos
+  // keyword search is full-text, so this finds 3D matches beyond the
+  // cached pool). Dedupe + under-2-min filter + cap 60, as usual.
+  if (await is3DOn(kvStore)) {
+    var threeDContext = build3DContext({
+      baseUrl: baseUrl,
+      axios: axios,
+      cheerio: cheerio,
+      commonHeaders: commonHeaders,
+      signal: signal,
+      kvStore: kvStore,
+    });
+    var cached = await ensure3DPool(threeDContext);
+    var plain = await parseVideoGrid({
+      url: targetUrl,
+      baseUrl: baseUrl,
+      axios: axios,
+      cheerio: cheerio,
+      commonHeaders: commonHeaders,
+      signal: signal,
+      kvStore: kvStore,
+    });
+    var matched = cached
+      ? intersectWithPool(plain, cached)
+      : plain.filter(function (p) {
+          return titleMatchesAnyKeyword(p.title);
+        });
+    var direct = await parseVideoGrid({
+      url: baseUrl + "/?k=" + encodeURIComponent(searchQuery + " 3d") + "&p=" + pageIndex,
+      baseUrl: baseUrl,
+      axios: axios,
+      cheerio: cheerio,
+      commonHeaders: commonHeaders,
+      signal: signal,
+      kvStore: kvStore,
+    });
+    var merged = dedupePosts(
+      keepLongEnough(
+        matched.concat(
+          direct,
+          cached ? poolTitleSearch(cached, searchQuery) : [],
+          cached ? poolCategorySearch(cached, searchQuery) : []
+        )
+      )
+    );
+    merged.sort(function (a, b) {
+      return compareTitle(a.title || "", b.title || "");
+    });
+    return merged.slice(0, 60);
+  }
+
   return parseVideoGrid({
     url: targetUrl,
     baseUrl: baseUrl,
@@ -453,4 +654,10 @@ export const getSearchPosts = async function (params) {
     signal: signal,
     kvStore: kvStore,
   });
+};
+
+// Parts grouping, same as getPosts above.
+export const getSearchPosts = async function (params) {
+  var posts = await getSearchPostsImpl(params);
+  return groupSeriesPosts(posts || []);
 };

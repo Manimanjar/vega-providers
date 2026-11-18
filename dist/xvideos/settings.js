@@ -33,6 +33,13 @@ var getSettingsSchema = async function({
       description: "Default: https://www.xvideos.com. Override if blocked by your ISP (e.g. https://www.xvideos2.com or https://www.xvideos3.com)",
       placeholder: "https://www.xvideos.com",
       defaultValue: "https://www.xvideos.com"
+    },
+    {
+      key: "only3D",
+      type: "toggle",
+      label: "3D content only",
+      description: "When on, every category shows only 3D / animation videos (3D, CGI, SFM, MMD, Blender, animation and more). Videos under 2 minutes are hidden. Categories stay the same \u2014 only the content changes.",
+      defaultValue: false
     }
   ];
 };

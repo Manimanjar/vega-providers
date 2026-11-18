@@ -1,5 +1,19 @@
 import { Post, ProviderContext } from "../types";
 import config from "../categories.config.json";
+import {
+  is3DOn,
+  ensure3DPool,
+  warm3DInBackground,
+  getBucketPosts,
+  intersectWithPool,
+  poolTitleSearch,
+  poolCategorySearch,
+  primaryTermFor,
+  titleMatchesAnyKeyword,
+  dedupePosts,
+  keepLongEnough,
+} from "../threeD";
+import { groupSeriesPosts } from "../series";
 
 "use strict";
 
@@ -253,6 +267,18 @@ async function parseVideoGrid(options) {
         ? rawHref
         : baseUrl + (rawHref.startsWith("/") ? "" : "/") + rawHref;
 
+      // Same lazy-load guard as the series fetcher: if every image
+      // source was a 1px data: placeholder, use the video's own
+      // preview poster (built from its ID) instead of an invisible one.
+      if (!image || image.indexOf("data:") === 0) {
+        var idm = String(rawHref).match(/\/video\/(\d+)/);
+        if (idm) {
+          var vid2 = parseInt(idm[1], 10);
+          var bucket2 = Math.floor(vid2 / 10000) * 10000;
+          image = baseUrl + "/contents/videos_screenshots/" + bucket2 + "/" + vid2 + "/preview.jpg";
+        }
+      }
+
       posts.push({
         title: rawTitle,
         link: absoluteLink,
@@ -282,7 +308,363 @@ function getCategory(filter) {
   });
 }
 
-export const getPosts = async function (params) {
+// 3D-only mode: the sweep searches each 3D keyword on Rule34Video
+// (/search/<keyword>) and the shared engine buckets the results into
+// the 10 categories. See providers/threeD.ts for the full design.
+function build3DContext(opts) {
+  // Per-sweep tag cache (promise memoization): the sweep calls
+  // fetchCategory3D for 8 categories in parallel waves, and several
+  // of them need the same video's tags. The first caller stores the
+  // in-flight promise; the rest await it — each video page is fetched
+  // at most once per sweep. The cache lives on this context object,
+  // which is created once per getPosts call, so it never leaks
+  // across sweeps.
+  var tagCache = {};
+  function getVideoMetaCached(link) {
+    if (!tagCache[link]) {
+      tagCache[link] = fetchVideoPageMeta(link, opts).catch(function () {
+        return { tags: "", is3D: false };
+      });
+    }
+    return tagCache[link];
+  }
+  return {
+    kvStore: opts.kvStore,
+    fetchGrid: function (keyword) {
+      var dash = encodeURIComponent(keyword.trim().replace(/\s+/g, "-"));
+      var targetUrl = opts.baseUrl + "/search/" + dash + "/";
+      return parseVideoGrid({
+        url: targetUrl,
+        baseUrl: opts.baseUrl,
+        axios: opts.axios,
+        cheerio: opts.cheerio,
+        commonHeaders: opts.commonHeaders,
+        signal: opts.signal,
+        kvStore: opts.kvStore,
+        requireVideo: true,
+      });
+    },
+    // Phase 2 of the sweep: "/search/<category>-3d/" and
+    // "/search/<category>-sfm/", pages 1-2. Rule34Video combined
+    // search is OR-ish: a result matched the category (via tags or
+    // title) OR "3d" (via title/tags) — verified live 2026-11-18.
+    // A pool video appearing here proves nothing about the category,
+    // so pool membership is NOT used as a signal, and the frequency
+    // cap idea was abandoned (a true category video also matches
+    // "3d" in every other category's search, so frequency cannot
+    // tell a true video from a generic compilation). A hit is kept
+    // only when it is 3D AND this relation, where 3D is proven by
+    // the title, the tags, or the page's own video_categories
+    // ('3D' — the site files "Family Rules" as 3D even though
+    // neither its titles nor its tags ever say "3D", so title-only
+    // matching could never find it), and the relation is proven by
+    // a relation word in the title or the tags. Compilations are
+    // grab-bags whose tags cover every category, so they never
+    // confirm a specific relation here (they can still land in
+    // Incest via Phase 2b). Everything that fails stays on
+    // Homepage via the pool, never in a category it does not
+    // belong to.
+    fetchCategory3D: async function (filter, pool) {
+      var term = primaryTermFor(filter, "rule34video");
+      if (!term) return [];
+      var words = R34_CATEGORY_WORDS[filter] || [];
+      if (words.length === 0) return [];
+      // --- Source A: combined searches ---
+      var grids = [];
+      ["3d", "sfm"].forEach(function (kw) {
+        [1, 2].forEach(function (page) {
+          var dash = encodeURIComponent((term + "-" + kw).trim().replace(/\s+/g, "-"));
+          var targetUrl = opts.baseUrl + "/search/" + dash + "/" + (page > 1 ? page + "/" : "");
+          grids.push(
+            parseVideoGrid({
+              url: targetUrl,
+              baseUrl: opts.baseUrl,
+              axios: opts.axios,
+              cheerio: opts.cheerio,
+              commonHeaders: opts.commonHeaders,
+              signal: opts.signal,
+              kvStore: opts.kvStore,
+              requireVideo: true,
+            }).catch(function () {
+              return [];
+            })
+          );
+        });
+      });
+      var groups = await Promise.all(grids);
+      var seen = {};
+      var candidates = [];
+      groups.forEach(function (g) {
+        (g || []).forEach(function (p) {
+          if (!p || !p.link || seen[p.link]) return;
+          seen[p.link] = true;
+          // Widened: a candidate is a video whose title names 3D OR
+          // names this relation. "Family Rules" titles name the
+          // relation ("family") but never "3D" — the old title-3D
+          // filter dropped them before they could be checked. The
+          // page check below (video_categories / tags) is what
+          // proves 3D-ness for those.
+          if (!titleMatchesAnyKeyword(p.title) && !matchesWords(p.title, words)) return;
+          if (/compilation|collection|archive/i.test(p.title || "")) return;
+          candidates.push(p);
+        });
+      });
+      var confirmed = [];
+      var toVerify = [];
+      candidates.forEach(function (p) {
+        // The title alone confirms only when it names BOTH dimensions.
+        if (matchesWords(p.title, words) && titleMatchesAnyKeyword(p.title)) confirmed.push(p);
+        else toVerify.push(p);
+      });
+      // Verify the rest by page (tags + video_categories), capped so
+      // the sweep stays bounded. Confirmed when the page proves 3D
+      // AND the title or the tags name this relation.
+      var checkList = toVerify.slice(0, 16);
+      for (var i = 0; i < checkList.length; i += 4) {
+        var batch = checkList.slice(i, i + 4);
+        var metas = await Promise.all(batch.map(function (p) {
+          return getVideoMetaCached(p.link);
+        }));
+        for (var j = 0; j < batch.length; j++) {
+          var meta = metas[j] || { tags: "", is3D: false };
+          if (meta.is3D && (matchesWords(batch[j].title, words) || matchesWords(meta.tags, words))) confirmed.push(batch[j]);
+        }
+        if (i + 4 < checkList.length) {
+          await new Promise(function (resolve) {
+            setTimeout(resolve, 300);
+          });
+        }
+      }
+      // --- Source B: tag-verify the 3D pool itself ---
+      // The plain category searches (pages 1-3) contain ZERO 3D-titled
+      // long videos (probed 2026-11-18), and the combined search's top
+      // results are mostly generic SFM clips with no relation signal.
+      // The pool already IS the site's 3D content, so the surest way
+      // to find a 3D sister/mom/... video is to read the pool videos'
+      // own tags. First 60 non-compilation pool videos (tier order:
+      // the "3d"/"cgi"/"sfm" results first), batched 8 at a time;
+      // the shared tag cache means the 120 fetches happen once per
+      // sweep, not once per category.
+      var poolSlice = (pool || [])
+        .filter(function (p) {
+          return p && p.link && !/compilation|collection|archive/i.test(p.title || "");
+        })
+        .slice(0, 120);
+      for (var b = 0; b < poolSlice.length; b += 8) {
+        var poolBatch = poolSlice.slice(b, b + 8);
+        var poolMetas = await Promise.all(
+          poolBatch.map(function (p) {
+            return getVideoMetaCached(p.link);
+          })
+        );
+        for (var k = 0; k < poolBatch.length; k++) {
+          var pm = poolMetas[k] || { tags: "", is3D: false };
+          if (pm.tags && matchesWords(pm.tags, words)) confirmed.push(poolBatch[k]);
+        }
+        if (b + 8 < poolSlice.length) {
+          await new Promise(function (resolve) {
+            setTimeout(resolve, 300);
+          });
+        }
+      }
+      return confirmed;
+    },
+    // Phase 2b of the sweep: the relation pool. Most relation videos
+    // carry an incest or family tag, so search the incest/family
+    // combined searches and classify each hit by its relation words
+    // (title first, then its .vp-tags via the shared page cache).
+    // Rule34Video combined search is OR-ish, so a hit may have
+    // matched only the "3d" half — the page check (video_categories
+    // '3D' + tags) is what confirms it is really 3D. A
+    // compilation's tags span every relation (one scene each), so a
+    // compilation only ever lands in Incest, and only when its tags
+    // confirm incest/family. A hit with no relation signal at all
+    // is dropped from the categories (it stays on Homepage via the
+    // pool). Returns { filter: [posts] }.
+    fetchRelationPool: async function (pool) {
+      // Pages 1-2 of each combined search: the relation videos are
+      // buried under the site's popularity ranking, and page 1 alone
+      // yields only a handful. Two pages per search, 8 fetches.
+      var queries = [
+        "incest-3d", "incest-3d/2", "incest-sfm", "incest-sfm/2",
+        "family-3d", "family-3d/2", "family-sfm", "family-sfm/2",
+      ];
+      var grids = queries.map(function (dash) {
+        var targetUrl = opts.baseUrl + "/search/" + dash + "/";
+        return parseVideoGrid({
+          url: targetUrl,
+          baseUrl: opts.baseUrl,
+          axios: opts.axios,
+          cheerio: opts.cheerio,
+          commonHeaders: opts.commonHeaders,
+          signal: opts.signal,
+          kvStore: opts.kvStore,
+          requireVideo: true,
+        }).catch(function () {
+          return [];
+        });
+      });
+      var groups = await Promise.all(grids);
+      var out = {};
+      var addTo = function (filter, post) {
+        if (!out[filter]) out[filter] = [];
+        out[filter].push(post);
+      };
+      var classifyByWords = function (text) {
+        var found = [];
+        for (var f in R34_CATEGORY_WORDS) {
+          if (matchesWords(text, R34_CATEGORY_WORDS[f])) found.push(f);
+        }
+        return found;
+      };
+      var seen = {};
+      var candidates = [];
+      groups.forEach(function (g) {
+        (g || []).forEach(function (p) {
+          if (!p || !p.link || seen[p.link]) return;
+          seen[p.link] = true;
+          // Widened, same as Source A: a candidate names 3D in the
+          // title OR names a relation in the title. "Family Rules"
+          // names the relation but never "3D" — the page check
+          // (video_categories) is what proves it is 3D.
+          if (!titleMatchesAnyKeyword(p.title) && classifyByWords(p.title).length === 0) return;
+          candidates.push(p);
+        });
+      });
+      var toVerify = [];
+      candidates.forEach(function (p) {
+        var byTitle = classifyByWords(p.title);
+        // The title alone confirms only when it names BOTH dimensions.
+        if (byTitle.length > 0 && titleMatchesAnyKeyword(p.title)) {
+          byTitle.forEach(function (f) {
+            addTo(f, p);
+          });
+        } else {
+          toVerify.push(p);
+        }
+      });
+      // Verify the rest by page (tags + video_categories), capped so
+      // the sweep stays bounded. Confirmed when the page proves 3D
+      // AND the title or the tags name a relation.
+      var checkList = toVerify.slice(0, 40);
+      for (var i = 0; i < checkList.length; i += 4) {
+        var batch = checkList.slice(i, i + 4);
+        var metas = await Promise.all(
+          batch.map(function (p) {
+            return getVideoMetaCached(p.link);
+          })
+        );
+        for (var j = 0; j < batch.length; j++) {
+          var post = batch[j];
+          var meta = metas[j] || { tags: "", is3D: false };
+          if (!meta.is3D) continue;
+          var tags = meta.tags || "";
+          var isCompilation = /compilation|collection|archive/i.test(post.title || "");
+          if (isCompilation) {
+            if (matchesWords(tags, R34_CATEGORY_WORDS.incest)) addTo("incest", post);
+            continue;
+          }
+          var byTitle = classifyByWords(post.title);
+          var byTags = classifyByWords(tags);
+          var all = byTitle.concat(byTags.filter(function (f) {
+            return byTitle.indexOf(f) === -1;
+          }));
+          if (all.length > 0) {
+            all.forEach(function (f) {
+              addTo(f, post);
+            });
+          }
+        }
+        if (i + 4 < checkList.length) {
+          await new Promise(function (resolve) {
+            setTimeout(resolve, 300);
+          });
+        }
+      }
+      return out;
+    },
+  };
+}
+
+// Rule34Video's own vocabulary for each category, used for both the
+// title check and the .vp-tags check. Plurals included ("moms" is a
+// different word from "mom" for word-boundary matching), plus the
+// site's concept tags: "milf" for Mom, "incest" for Family only.
+// "incest" is deliberately NOT listed for the specific relations —
+// it is shared across all of them, so it cannot confirm one.
+const R34_CATEGORY_WORDS = {
+  family: ["family", "families", "stepfamily", "stepfamilies", "incest"],
+  incest: ["incest", "family", "families", "stepfamily", "stepfamilies"],
+  rel_sister: ["sister", "sisters", "stepsister", "stepsisters", "stepsis", "sis", "step sis", "bigsis", "big sis", "lilsis", "lil sis", "little sis", "older sister", "older sisters", "younger sister", "younger sisters", "twin sister", "twin sisters"],
+  rel_brother: ["brother", "brothers", "stepbrother", "stepbrothers", "stepbro", "bro", "step bro", "bigbro", "big bro", "lilbro", "lil bro", "little bro", "older brother", "older brothers", "younger brother", "younger brothers"],
+  rel_mom: ["mom", "moms", "mother", "mothers", "stepmom", "stepmoms", "stepmother", "stepmothers", "mommy", "mommies", "mama", "mamas", "mother and son", "milf"],
+  rel_daughter: ["daughter", "daughters", "stepdaughter", "stepdaughters", "father and daughter", "mother and daughter"],
+  rel_father: ["father", "fathers", "dad", "dads", "stepdad", "stepdads", "stepfather", "stepfathers", "daddy", "daddies"],
+  rel_aunt: ["aunt", "aunts", "auntie", "aunties", "aunty", "aunties", "stepaunt", "stepaunts", "aunt and nephew"],
+};
+
+// Word-boundary phrase match against a free-text string (title or the
+// space-joined tag list). Same rule as phraseIn in threeD.ts.
+function matchesWords(text, words) {
+  var hay = " " + String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim() + " ";
+  if (hay.trim().length === 0) return false;
+  for (var i = 0; i < words.length; i++) {
+    var term = words[i].toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+    if (!term) continue;
+    var padded = " " + term + " ";
+    if (hay.indexOf(padded) !== -1) return true;
+  }
+  return false;
+}
+
+// Small getMeta-style page fetch: the video page's own tags live in
+// .vp-tags (same selector as meta.ts), and its category lives in the
+// page's JavaScript as video_categories. Returns { tags, is3D }.
+// is3D is the per-video 3D proof the site itself carries: the
+// category is literally '3D' for videos the site files as 3D
+// (verified live 2026-11-18: "Family Rules 13" -> '3D', a 2D sister
+// video -> '2D', a "3d hentai beauties" video -> '3D'), or a 3D word
+// in the tags. This is what confirms videos whose TITLE never says
+// "3D" — "Family Rules" is an SFM series, but neither its titles
+// nor its tags contain a 3D word, so title-only matching could never
+// find it. A franchise category ("The Witcher 3: Wild Hunt") is
+// neither proof nor disproof, so it falls back to the tags. Kept
+// here instead of importing meta.ts so posts.js stays a
+// self-contained bundle.
+async function fetchVideoPageMeta(link, opts) {
+  var res = await opts.axios.get(link, {
+    headers: Object.assign({}, opts.commonHeaders || {}, {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      Referer: opts.baseUrl + "/",
+    }),
+    timeout: 12000,
+    signal: opts.signal,
+  });
+  var html = res.data || "";
+  var $ = opts.cheerio.load(html);
+  var tags = [];
+  $('.vp-tags a[href*="/tags/"]').each(function (_, el) {
+    var t = $(el).text().trim();
+    if (t && t !== "Tags" && tags.indexOf(t) === -1) tags.push(t);
+  });
+  var tagText = tags.join(" ");
+  var is3D = titleMatchesAnyKeyword(tagText);
+  var catMatch = html.match(/video_categories\s*:\s*'([^']*)'/i) || html.match(/video_categories\s*:\s*"([^"]*)"/i);
+  if (catMatch && catMatch[1]) {
+    var catVal = catMatch[1].toLowerCase();
+    if (/\b3d\b/.test(catVal) || /\banimation\b/.test(catVal)) is3D = true;
+  }
+  return { tags: tagText, is3D: is3D };
+}
+
+async function get3DPostsForFilter(ctx, filter, page) {
+  var cached = await ensure3DPool(ctx);
+  if (!cached) return null;
+  return getBucketPosts(cached, filter, page);
+}
+
+const getPostsImpl = async function (params) {
   var filter = params.filter;
   var page = params.page;
   var signal = params.signal;
@@ -295,6 +677,27 @@ export const getPosts = async function (params) {
 
   var baseUrl = await getBase(kvStore, axios);
   var category = getCategory(filter);
+
+  // 3D-only mode ("3D content only" toggle in the provider settings):
+  // the same 10 categories, only 3D / animation content inside them.
+  // The pool is swept once and cached for an hour; while the toggle is
+  // OFF the cache is warmed in the background (at most once an hour)
+  // so turning it on feels instant. If the pool is unavailable the
+  // normal feed is served instead — never a black screen.
+  var threeDContext = build3DContext({
+    baseUrl: baseUrl,
+    axios: axios,
+    cheerio: cheerio,
+    commonHeaders: commonHeaders,
+    signal: signal,
+    kvStore: kvStore,
+  });
+  if (await is3DOn(kvStore)) {
+    var threeDPosts = await get3DPostsForFilter(threeDContext, filter, page);
+    if (threeDPosts) return threeDPosts;
+  } else if (page <= 1) {
+    warm3DInBackground(threeDContext);
+  }
 
   if (category && category.mode === "keep_existing") {
     var familyUrl =
@@ -423,7 +826,16 @@ export const getPosts = async function (params) {
   });
 };
 
-export const getSearchPosts = async function (params) {
+// Parts grouping is applied here, once, to every list this provider
+// returns (normal feed, 3D buckets, search) — parts of one video
+// become one card (first part's thumbnail and title, badge "N parts")
+// and the rest are reachable from its detail. See providers/series.ts.
+export const getPosts = async function (params) {
+  var posts = await getPostsImpl(params);
+  return groupSeriesPosts(posts || []);
+};
+
+const getSearchPostsImpl = async function (params) {
   var searchQuery = params.searchQuery;
   var page = params.page;
   var signal = params.signal;
@@ -441,6 +853,43 @@ export const getSearchPosts = async function (params) {
       ? baseUrl + "/search/" + cleanQuery + "/" + page + "/"
       : baseUrl + "/search/" + cleanQuery + "/";
 
+  // 3D-only mode: keep the query's results that are also in the verified
+  // 3D pool. (A combined "/search/<query>-3d/" does NOT narrow on this
+  // site — verified live 2026-11-18: it returns the same videos as the
+  // plain query — so the pool intersection is the only exact filter.)
+  if (await is3DOn(kvStore)) {
+    var threeDContext = build3DContext({
+      baseUrl: baseUrl,
+      axios: axios,
+      cheerio: cheerio,
+      commonHeaders: commonHeaders,
+      signal: signal,
+      kvStore: kvStore,
+    });
+    var cached = await ensure3DPool(threeDContext);
+    var plain = await parseVideoGrid({
+      url: targetUrl,
+      baseUrl: baseUrl,
+      axios: axios,
+      cheerio: cheerio,
+      commonHeaders: commonHeaders,
+      signal: signal,
+      kvStore: kvStore,
+      requireVideo: true,
+    });
+    if (cached) {
+      var fromQuery = intersectWithPool(plain, cached);
+      var fromPool = poolTitleSearch(cached, searchQuery);
+      var fromCategory = poolCategorySearch(cached, searchQuery);
+      return dedupePosts(fromQuery.concat(fromPool, fromCategory)).slice(0, 60);
+    }
+    return plain
+      .filter(function (p) {
+        return titleMatchesAnyKeyword(p.title);
+      })
+      .slice(0, 60);
+  }
+
   return parseVideoGrid({
     url: targetUrl,
     baseUrl: baseUrl,
@@ -451,4 +900,10 @@ export const getSearchPosts = async function (params) {
     kvStore: kvStore,
     requireVideo: true,
   });
+};
+
+// Parts grouping, same as getPosts above.
+export const getSearchPosts = async function (params) {
+  var posts = await getSearchPostsImpl(params);
+  return groupSeriesPosts(posts || []);
 };

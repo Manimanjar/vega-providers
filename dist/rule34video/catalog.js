@@ -42,6 +42,13 @@ var categories_config_default = {
       rule34Tags: []
     },
     {
+      title: "Incest",
+      filter: "incest",
+      mode: "multi_query",
+      xvideosQueries: ["taboo", "stepfamily", "taboo+family"],
+      rule34Tags: ["incest", "family"]
+    },
+    {
       title: "Sister",
       filter: "rel_sister",
       mode: "multi_query",
