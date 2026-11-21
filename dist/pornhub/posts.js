@@ -1,5 +1,5 @@
 // @vega-provider pornhub
-// @vega-version 2.3.9
+// @vega-version 2.4.0
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -385,8 +385,6 @@ var categories_config_default = {
 
 // providers/threeD.ts
 var THREE_D_TOGGLE_KEY = "only3D";
-var THREE_D_CACHE_KEY = "threeDCacheV1";
-var THREE_D_PAGE_SIZE = 60;
 var CAT_POOL_META_KEY = "catPoolMetaV1";
 var CAT_POOL_KEY = "catPoolV1";
 var CAT_POOL_TTL_MS = 36e5;
@@ -530,6 +528,8 @@ async function getPooledSearchPage(opts) {
   var query = opts.query || "";
   var page = Math.max(1, opts.page || 1);
   var fetchSitePage = opts.fetchSitePage;
+  var fetchTermPage = opts.fetchTermPage;
+  var terms = opts.terms;
   var extraPosts = opts.extraPosts || [];
   var PAGE = SEARCH_POOL_PAGE_SIZE;
   var now = Date.now();
@@ -539,51 +539,106 @@ async function getPooledSearchPage(opts) {
     var cached = null;
     var pool = [];
     var fetchedPages = 0;
+    var curTermIdx = 0;
+    var curTermPage = 1;
     var nextStart = 0;
     if (loaded && loaded.meta && loaded.meta.ts && now - loaded.meta.ts < SEARCH_POOL_TTL_MS && Array.isArray(loaded.posts)) {
       cached = loaded.meta;
       pool = loaded.posts;
       fetchedPages = loaded.meta.fetchedPages || 0;
+      curTermIdx = typeof loaded.meta.curTermIdx === "number" ? loaded.meta.curTermIdx : 0;
+      curTermPage = typeof loaded.meta.curTermPage === "number" ? loaded.meta.curTermPage : 1;
       nextStart = loaded.meta.nextStart || 0;
     }
     if (extraPosts.length > 0) {
       pool = dedupePosts(extraPosts.concat(pool));
     }
-    var emptyStreak = 0;
-    var dupStreak = 0;
     var wantEnd = Math.max(page * PAGE, nextStart + PAGE);
-    while (pool.length < wantEnd) {
-      var sp = fetchedPages + 1;
-      var pagePosts = [];
-      try {
-        pagePosts = await fetchSitePage(sp) || [];
-      } catch (e) {
-        pagePosts = [];
-      }
-      if (pagePosts.length === 0) {
+    if (Array.isArray(terms) && terms.length > 0 && typeof fetchTermPage === "function") {
+      var emptyStreak = 0;
+      var dupStreak = 0;
+      while (pool.length < wantEnd && curTermIdx < terms.length) {
+        var currentTerm = terms[curTermIdx];
+        var pagePosts = [];
         try {
-          await new Promise(function(r) {
-            setTimeout(r, 1200);
-          });
+          pagePosts = await fetchTermPage(currentTerm, curTermPage) || [];
+        } catch (e) {
+          pagePosts = [];
+        }
+        if (pagePosts.length === 0) {
+          try {
+            await new Promise(function(r) {
+              setTimeout(r, 1e3);
+            });
+            pagePosts = await fetchTermPage(currentTerm, curTermPage) || [];
+          } catch (e) {
+            pagePosts = [];
+          }
+        }
+        if (pagePosts.length === 0) {
+          emptyStreak++;
+          if (emptyStreak >= 2) {
+            emptyStreak = 0;
+            curTermIdx++;
+            curTermPage = 1;
+            dupStreak = 0;
+            continue;
+          } else {
+            curTermPage++;
+            continue;
+          }
+        }
+        emptyStreak = 0;
+        var before = pool.length;
+        pool = dedupePosts(pool.concat(pagePosts));
+        curTermPage++;
+        if (pool.length === before) {
+          dupStreak++;
+          if (dupStreak >= 15) {
+            dupStreak = 0;
+            curTermIdx++;
+            curTermPage = 1;
+          }
+        } else {
+          dupStreak = 0;
+        }
+      }
+    } else if (typeof fetchSitePage === "function") {
+      var emptyStreak = 0;
+      var dupStreak = 0;
+      while (pool.length < wantEnd) {
+        var sp = fetchedPages + 1;
+        var pagePosts = [];
+        try {
           pagePosts = await fetchSitePage(sp) || [];
         } catch (e) {
           pagePosts = [];
         }
-      }
-      fetchedPages = sp;
-      if (pagePosts.length === 0) {
-        emptyStreak++;
-        if (emptyStreak >= 5) break;
-        continue;
-      }
-      emptyStreak = 0;
-      var before = pool.length;
-      pool = dedupePosts(pool.concat(pagePosts));
-      if (pool.length === before) {
-        dupStreak++;
-        if (dupStreak >= 3) break;
-      } else {
-        dupStreak = 0;
+        if (pagePosts.length === 0) {
+          try {
+            await new Promise(function(r) {
+              setTimeout(r, 1200);
+            });
+            pagePosts = await fetchSitePage(sp) || [];
+          } catch (e) {
+            pagePosts = [];
+          }
+        }
+        fetchedPages = sp;
+        if (pagePosts.length === 0) {
+          emptyStreak++;
+          if (emptyStreak >= 5) break;
+          continue;
+        }
+        emptyStreak = 0;
+        var before = pool.length;
+        pool = dedupePosts(pool.concat(pagePosts));
+        if (pool.length === before) {
+          dupStreak++;
+          if (dupStreak >= 15) break;
+        } else {
+          dupStreak = 0;
+        }
       }
     }
     var pageStarts = cached && cached.pageStarts ? cached.pageStarts : {};
@@ -608,6 +663,8 @@ async function getPooledSearchPage(opts) {
     }
     await writeChunkedPool(kvStore, key, pool, {
       fetchedPages,
+      curTermIdx,
+      curTermPage,
       nextStart,
       pageStarts,
       pageEnds,
@@ -615,26 +672,35 @@ async function getPooledSearchPage(opts) {
     });
     return slice;
   } catch (e) {
-    var fallback = await fetchSitePage(page) || [];
-    return fallback.slice(0, PAGE);
+    if (typeof fetchSitePage === "function") {
+      var fallback = await fetchSitePage(page) || [];
+      return fallback.slice(0, PAGE);
+    }
+    return [];
   }
 }
 var THREE_D_KEYWORDS = [
   { kw: "3d", tier: 1 },
+  { kw: "animation", tier: 1 },
+  { kw: "gameplay", tier: 1 },
+  { kw: "walkthrough", tier: 1 },
+  { kw: "cg", tier: 1 },
   { kw: "cgi", tier: 1 },
   { kw: "sfm", tier: 1 },
   { kw: "mmd", tier: 1 },
   { kw: "blender", tier: 1 },
   { kw: "daz3d", tier: 1 },
-  { kw: "3d animation", tier: 1 },
-  { kw: "3d cartoon", tier: 1 },
-  { kw: "3d hentai", tier: 1 },
   { kw: "vfx", tier: 2 },
   { kw: "sfx", tier: 2 },
   { kw: "fx", tier: 2 },
-  { kw: "animation", tier: 3 },
+  { kw: "3d animation", tier: 1 },
+  { kw: "3d cartoon", tier: 1 },
+  { kw: "3d hentai", tier: 1 },
   { kw: "cartoon", tier: 3 }
 ];
+var THREE_D_KEYWORD_STRINGS = THREE_D_KEYWORDS.map(function(k) {
+  return k.kw;
+});
 var is3DOn = async function(kvStore) {
   if (!kvStore || typeof kvStore.get !== "function") return false;
   try {
@@ -780,12 +846,6 @@ function buildCategoryTerms() {
   return out;
 }
 var CATEGORY_TERMS = buildCategoryTerms();
-function isKnown3DFilter(filter) {
-  for (var i = 0; i < CATEGORY_TERMS.length; i++) {
-    if (CATEGORY_TERMS[i].filter === filter) return true;
-  }
-  return false;
-}
 var COUSIN_OTHER_PHRASES = [
   "cousin brother",
   "cousin bro",
@@ -854,17 +914,6 @@ function searchTermsFor(filter, site, maxN) {
   }
   return [];
 }
-function titleMatchesTerms(title, terms, filter) {
-  var norm = normalizeText(title);
-  if (!norm) return false;
-  var skipBareCousin = filter === "rel_sister" && hasCousinOtherPhrase(norm);
-  for (var i = 0; i < terms.length; i++) {
-    var term = terms[i];
-    if (skipBareCousin && term === "cousin") continue;
-    if (phraseIn(norm, term)) return true;
-  }
-  return false;
-}
 function classifyRelation(title, tagText) {
   var out = [];
   for (var i = 0; i < CATEGORY_TERMS.length; i++) {
@@ -896,76 +945,9 @@ function keepLongEnough(posts) {
     return d === 0 || d >= 120;
   });
 }
-var read3DCache = async function(kvStore) {
-  if (!kvStore || typeof kvStore.get !== "function") return null;
-  try {
-    var loaded = await readChunkedPool(kvStore, THREE_D_CACHE_KEY);
-    if (!loaded || !loaded.meta) return null;
-    if (!loaded.meta.expiresAt || loaded.meta.expiresAt <= Date.now()) {
-      return null;
-    }
-    if (!loaded.meta.buckets) return null;
-    return {
-      expiresAt: loaded.meta.expiresAt,
-      pool: loaded.posts,
-      buckets: loaded.meta.buckets
-    };
-  } catch (e) {
-    return null;
-  }
-};
 var warm3DInBackground = function() {
   return Promise.resolve(true);
 };
-function getBucketPosts(cached, filter, page) {
-  if (!cached || !cached.pool || !cached.buckets) return null;
-  if (!isKnown3DFilter(filter)) return null;
-  var indices = cached.buckets[filter];
-  if (!Array.isArray(indices)) return null;
-  var pageNum = Math.max(1, page || 1);
-  var start = (pageNum - 1) * THREE_D_PAGE_SIZE;
-  var slice = indices.slice(start, start + THREE_D_PAGE_SIZE);
-  var out = [];
-  for (var i = 0; i < slice.length; i++) {
-    var post = cached.pool[slice[i]];
-    if (post) out.push(post);
-  }
-  return out;
-}
-function intersectWithPool(posts, cached) {
-  if (!cached || !cached.pool) return posts || [];
-  var poolKeys = {};
-  for (var i = 0; i < cached.pool.length; i++) {
-    poolKeys[normalizeLink(cached.pool[i].link)] = true;
-  }
-  return (posts || []).filter(function(p) {
-    return p && p.link && poolKeys[normalizeLink(p.link)];
-  });
-}
-function poolCategorySearch(cached, query) {
-  if (!cached || !cached.pool || !cached.buckets) return [];
-  var out = [];
-  for (var i = 0; i < CATEGORY_TERMS.length; i++) {
-    var cat = CATEGORY_TERMS[i];
-    if (cat.filter === "homepage") continue;
-    if (cat.terms.length === 0) continue;
-    if (!titleMatchesTerms(query, cat.terms, cat.filter)) continue;
-    var idxs = cached.buckets[cat.filter] || [];
-    for (var j = 0; j < idxs.length; j++) {
-      var post = cached.pool[idxs[j]];
-      if (post) out.push(post);
-    }
-  }
-  return out;
-}
-function poolTitleSearch(cached, query) {
-  if (!cached || !cached.pool) return [];
-  var q = normalizeText(query);
-  if (!q) return [];
-  return cached.pool.filter(function(p) {
-    return p && p.title && phraseIn(normalizeText(p.title), q);
-  });
-}
 function titleMatchesAnyKeyword(title) {
   var norm = normalizeText(title);
   if (!norm) return false;
@@ -1007,7 +989,7 @@ function parsePartTitle(title) {
     }
   }
   m = clean.match(
-    /^(.*?)\s*[-–—:]?\s*(?:part|pt\.?|episode|ep\.?|chapter|ch\.?)\s*(\d+(?:\.\d+)?)\b\s*(.*)$/i
+    /^(.*?)\s*[-–—:]?\s*(?:part|pt\.?|volume|vol\.?|v\.?|episode|ep\.?|chapter|ch\.?|season|s\.?|book|bk\.?|#)\s*(\d+(?:\.\d+)?)\b\s*(.*)$/i
   );
   if (m) {
     var base1 = m[1].trim().replace(/[-–—:]+$/, "").trim();
@@ -1499,63 +1481,39 @@ function build3DContext(opts) {
 }
 async function get3DPostsForFilter(ctx, filter, page, apiOpts) {
   var kvStore = ctx && ctx.kvStore;
-  var cached = null;
-  try {
-    cached = await read3DCache(kvStore);
-  } catch (e) {
-    cached = null;
-  }
-  if (cached) {
-    var bucket = getBucketPosts(cached, filter, page);
-    if (bucket && bucket.length > 0) return bucket;
-  }
-  var pageNum = Math.max(1, page || 1);
-  var direct = [];
-  try {
-    if (filter === "homepage" || !filter) {
-      var grids = await Promise.all([
-        searchApi("3d", pageNum, apiOpts).catch(function() {
-          return [];
-        }),
-        searchApi("sfm", pageNum, apiOpts).catch(function() {
-          return [];
-        })
-      ]);
-      direct = dedupePosts(keepLongEnough((grids[0] || []).concat(grids[1] || [])));
-    } else {
-      var category = getCategory(filter);
-      var queries = category && category.xvideosQueries ? category.xvideosQueries : [];
-      if (queries.length === 0) {
-        queries = [filter.replace(/^rel_/, "")];
+  if (filter === "homepage" || !filter) {
+    return getPooledSearchPage({
+      kvStore,
+      query: "pornhub_3d_home",
+      page,
+      terms: THREE_D_KEYWORD_STRINGS,
+      fetchTermPage: function(term, sp) {
+        return searchApi(term, sp, apiOpts);
       }
-      var primaryTerm = String(queries[0]).replace(/\+/g, " ").trim();
-      var grids = await Promise.all([
-        searchApi(primaryTerm + " 3d", pageNum, apiOpts).catch(function() {
-          return [];
-        }),
-        searchApi(primaryTerm + " sfm", pageNum, apiOpts).catch(function() {
-          return [];
-        })
-      ]);
-      direct = dedupePosts(keepLongEnough((grids[0] || []).concat(grids[1] || [])));
-      if (direct.length === 0 && queries.length > 1) {
-        var secTerm = String(queries[1]).replace(/\+/g, " ").trim();
-        var secGrids = await Promise.all([
-          searchApi(secTerm + " 3d", pageNum, apiOpts).catch(function() {
-            return [];
-          }),
-          searchApi(secTerm + " sfm", pageNum, apiOpts).catch(function() {
-            return [];
-          })
-        ]);
-        direct = dedupePosts(keepLongEnough((secGrids[0] || []).concat(secGrids[1] || [])));
-      }
+    });
+  }
+  var category = getCategory(filter);
+  var queries = category && category.xvideosQueries ? category.xvideosQueries : [];
+  if (queries.length === 0) {
+    queries = [filter.replace(/^rel_/, "")];
+  }
+  var catTerms = [];
+  for (var qi = 0; qi < queries.length; qi++) {
+    var rawQ = String(queries[qi]).replace(/\+/g, " ").trim();
+    if (rawQ) {
+      catTerms.push(rawQ + " 3d");
+      catTerms.push(rawQ + " animation");
     }
-  } catch (e) {
-    direct = [];
   }
-  warm3DInBackground(ctx);
-  return direct;
+  return getPooledSearchPage({
+    kvStore,
+    query: "pornhub_3d_cat_" + filter,
+    page,
+    terms: catTerms,
+    fetchTermPage: function(term, sp) {
+      return searchApi(term, sp, apiOpts);
+    }
+  });
 }
 var getPostsImpl = async function(params) {
   var filter = params.filter;
@@ -1591,8 +1549,7 @@ var getPostsImpl = async function(params) {
     return searchApi("family", page, apiOpts);
   }
   if (category && category.mode === "random_feed") {
-    var randomPage = Math.floor(Math.random() * 20) + 1;
-    return searchApi("", randomPage, apiOpts);
+    return searchApi("", page, apiOpts);
   }
   if (category && category.mode === "multi_query") {
     var queries = Array.isArray(category.xvideosQueries) ? category.xvideosQueries : [];
@@ -1655,22 +1612,6 @@ var getSearchPostsImpl = async function(params) {
   var baseUrl = await getBase(kvStore, axios);
   var normQuery = (searchQuery || "").trim().toLowerCase().replace(/\s+/g, " ");
   var threeDOn = await is3DOn(kvStore);
-  var cached = null;
-  if (threeDOn) {
-    var threeDContext = build3DContext({
-      axios,
-      cheerio,
-      commonHeaders,
-      signal,
-      kvStore
-    });
-    try {
-      cached = await read3DCache(kvStore);
-    } catch (e) {
-      cached = null;
-    }
-    if (!cached) warm3DInBackground(threeDContext);
-  }
   var apiOpts = {
     axios,
     commonHeaders,
@@ -1678,31 +1619,28 @@ var getSearchPostsImpl = async function(params) {
     baseUrl,
     kvStore
   };
-  var fetchSitePage = async function(sp) {
-    var plain = await searchApi(searchQuery, sp, apiOpts);
-    if (!threeDOn) return plain;
-    var matched = cached ? intersectWithPool(plain, cached) : plain.filter(function(p) {
-      return titleMatchesAnyKeyword(p.title);
+  if (threeDOn) {
+    var terms = THREE_D_KEYWORD_STRINGS.map(function(kw) {
+      return normQuery + " " + kw;
     });
-    var direct = await searchApi(searchQuery + " 3d", sp, apiOpts);
-    return dedupePosts(keepLongEnough(matched.concat(direct)));
-  };
-  var extraPosts = [];
-  if (threeDOn && cached) {
-    extraPosts = dedupePosts(
-      keepLongEnough(
-        poolTitleSearch(cached, searchQuery).concat(
-          poolCategorySearch(cached, searchQuery)
-        )
-      )
-    );
+    return getPooledSearchPage({
+      kvStore,
+      query: "3d:" + normQuery,
+      page,
+      terms,
+      fetchTermPage: function(term, sp) {
+        return searchApi(term, sp, apiOpts);
+      }
+    });
   }
+  var fetchSitePage = function(sp) {
+    return searchApi(searchQuery, sp, apiOpts);
+  };
   return getPooledSearchPage({
     kvStore,
     query: normQuery,
     page,
-    fetchSitePage,
-    extraPosts
+    fetchSitePage
   });
 };
 var getSearchPosts = async function(params) {

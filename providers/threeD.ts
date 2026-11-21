@@ -302,29 +302,21 @@ export async function getPooledSearchPage(opts) {
   var query = opts.query || "";
   var page = Math.max(1, opts.page || 1);
   var fetchSitePage = opts.fetchSitePage;
+  var fetchTermPage = opts.fetchTermPage;
+  var terms = opts.terms;
   var extraPosts = opts.extraPosts || [];
   var PAGE = SEARCH_POOL_PAGE_SIZE;
   var now = Date.now();
   var key = SEARCH_POOL_KEY + ":" + query;
   try {
-    // Chunked load: the meta (fetchedPages, page map, ts) lives in
-    // the base key; the posts live in 500-post chunks under it. A
-    // pool saved by the old single-entry format (pre-uncap) has its
-    // posts in the base key itself — readChunkedPool returns an empty
-    // post list for it (chunkCount 0), so treat it as expired and
-    // rebuild from scratch rather than serving a stale short pool.
+    // Chunked load: the meta (fetchedPages, curTermIdx, curTermPage, page map, ts) lives in
+    // the base key; the posts live in 500-post chunks under it.
     var loaded = await readChunkedPool(kvStore, key);
     var cached = null;
     var pool = [];
     var fetchedPages = 0;
-    // nextStart is the global index where the next FORWARD page must
-    // begin. It is what makes the slices gap-proof: if an early page
-    // was served short (the pool was thin because a site page 502'd),
-    // the next forward page starts where the last one ENDED, not at
-    // its fixed (page-1)*60 index — otherwise the videos between the
-    // short slice's end and the fixed index would never be shown.
-    // Backward requests (re-opening an earlier page) use their fixed
-    // slice, because that content was already served and is stable.
+    var curTermIdx = 0;
+    var curTermPage = 1;
     var nextStart = 0;
     if (
       loaded &&
@@ -336,6 +328,8 @@ export async function getPooledSearchPage(opts) {
       cached = loaded.meta;
       pool = loaded.posts;
       fetchedPages = loaded.meta.fetchedPages || 0;
+      curTermIdx = typeof loaded.meta.curTermIdx === "number" ? loaded.meta.curTermIdx : 0;
+      curTermPage = typeof loaded.meta.curTermPage === "number" ? loaded.meta.curTermPage : 1;
       nextStart = loaded.meta.nextStart || 0;
     }
     // 3D pool matches go first (verified 3D, most relevant in 3D mode)
@@ -344,71 +338,99 @@ export async function getPooledSearchPage(opts) {
       pool = dedupePosts(extraPosts.concat(pool));
     }
     // Fetch more site pages until the pool covers the requested slice.
-    // Site pages arrive in the site's own order and are appended, so
-    // the stream order is stable across calls and pages never overlap.
-    // There is NO cap: the pool keeps fetching further site pages as
-    // the user scrolls deeper, until the site genuinely runs out (5
-    // empty pages in a row). Every video fetched is deduped against
-    // the WHOLE pool, so a video that appears on site page 1 and
-    // again on site page 15 is shown once. A site page can come back
-    // empty for a TRANSIENT reason (XVideos 429 rate-limit,
-    // Rule34Video 502) as well as because the site is genuinely out
-    // of results — so an empty page is RETRIED once (after a short
-    // pause, which usually clears a 429/502) and only then counted as
-    // empty, and only 5 empty pages in a row end the fetch. A single
-    // failed page must never strand the user on a short or empty app
-    // page while further site pages still hold content.
-    var emptyStreak = 0;
-    var dupStreak = 0;
-    // The fetch target is the END of the slice we are about to serve
-    // (which may be nextStart+60 for a forward page, not page*60).
+    // There is NO premature cut-off: pagination continues until the site genuinely
+    // runs out of results (empty response repeated with retry).
     var wantEnd = Math.max(page * PAGE, nextStart + PAGE);
-    while (pool.length < wantEnd) {
-      var sp = fetchedPages + 1;
-      var pagePosts = [];
-      try {
-        pagePosts = (await fetchSitePage(sp)) || [];
-      } catch (e) {
-        pagePosts = [];
-      }
-      if (pagePosts.length === 0) {
-        // One retry after a pause: a 429/502 is usually gone by then.
+    if (Array.isArray(terms) && terms.length > 0 && typeof fetchTermPage === "function") {
+      var emptyStreak = 0;
+      var dupStreak = 0;
+      while (pool.length < wantEnd && curTermIdx < terms.length) {
+        var currentTerm = terms[curTermIdx];
+        var pagePosts = [];
         try {
-          await new Promise(function (r) {
-            setTimeout(r, 1200);
-          });
+          pagePosts = (await fetchTermPage(currentTerm, curTermPage)) || [];
+        } catch (e) {
+          pagePosts = [];
+        }
+        if (pagePosts.length === 0) {
+          try {
+            await new Promise(function (r) {
+              setTimeout(r, 1000);
+            });
+            pagePosts = (await fetchTermPage(currentTerm, curTermPage)) || [];
+          } catch (e) {
+            pagePosts = [];
+          }
+        }
+        if (pagePosts.length === 0) {
+          emptyStreak++;
+          if (emptyStreak >= 2) {
+            // Reached last page of this keyword! Move to next keyword in sequence
+            emptyStreak = 0;
+            curTermIdx++;
+            curTermPage = 1;
+            dupStreak = 0;
+            continue;
+          } else {
+            curTermPage++;
+            continue;
+          }
+        }
+        emptyStreak = 0;
+        var before = pool.length;
+        pool = dedupePosts(pool.concat(pagePosts));
+        curTermPage++;
+        if (pool.length === before) {
+          dupStreak++;
+          if (dupStreak >= 15) {
+            // Loop guard for repeating identical pages: advance to next keyword
+            dupStreak = 0;
+            curTermIdx++;
+            curTermPage = 1;
+          }
+        } else {
+          dupStreak = 0;
+        }
+      }
+    } else if (typeof fetchSitePage === "function") {
+      var emptyStreak = 0;
+      var dupStreak = 0;
+      while (pool.length < wantEnd) {
+        var sp = fetchedPages + 1;
+        var pagePosts = [];
+        try {
           pagePosts = (await fetchSitePage(sp)) || [];
         } catch (e) {
           pagePosts = [];
         }
-      }
-      fetchedPages = sp;
-      if (pagePosts.length === 0) {
-        emptyStreak++;
-        if (emptyStreak >= 5) break;
-        continue;
-      }
-      emptyStreak = 0;
-      var before = pool.length;
-      pool = dedupePosts(pool.concat(pagePosts));
-      // Stop only if 3 consecutive pages yield 0 new videos (or 5 empty pages in a row)
-      if (pool.length === before) {
-        dupStreak++;
-        if (dupStreak >= 3) break;
-      } else {
-        dupStreak = 0;
+        if (pagePosts.length === 0) {
+          try {
+            await new Promise(function (r) {
+              setTimeout(r, 1200);
+            });
+            pagePosts = (await fetchSitePage(sp)) || [];
+          } catch (e) {
+            pagePosts = [];
+          }
+        }
+        fetchedPages = sp;
+        if (pagePosts.length === 0) {
+          emptyStreak++;
+          if (emptyStreak >= 5) break; // Genuine end of results after 5 empty pages
+          continue;
+        }
+        emptyStreak = 0;
+        var before = pool.length;
+        pool = dedupePosts(pool.concat(pagePosts));
+        if (pool.length === before) {
+          dupStreak++;
+          if (dupStreak >= 15) break;
+        } else {
+          dupStreak = 0;
+        }
       }
     }
-    // Serve the slice. pageStarts/pageEnds record the exact global
-    // range each app page served, so re-opening a page returns the
-    // SAME videos it showed the first time — even if the pool has
-    // grown since (a re-request must not suddenly serve 60 videos
-    // when it first served 30, or those extra videos would duplicate
-    // the next page). A page served for the first time starts at
-    // nextStart — the end of the last forward slice — so a short early
-    // page can never strand videos in a gap: the next page continues
-    // exactly where the last one ended instead of jumping to its
-    // fixed (page-1)*60 index.
+    // Serve the slice.
     var pageStarts = cached && cached.pageStarts ? cached.pageStarts : {};
     var pageEnds = cached && cached.pageEnds ? cached.pageEnds : {};
     var isFirstServe =
@@ -426,18 +448,17 @@ export async function getPooledSearchPage(opts) {
         : start + PAGE;
     }
     var slice = pool.slice(start, end);
-    // Only a first serve advances nextStart and records its end; a
-    // re-request must not move either, or later pages would shift.
     if (isFirstServe && slice.length > 0) {
       pageEnds[page] = start + slice.length;
       if (start + slice.length > nextStart) {
         nextStart = start + slice.length;
       }
     }
-    // Chunked save: posts go into 500-post chunks, the small meta
-    // (fetchedPages, page map, ts) into the base key. No size cap.
+    // Chunked save: posts go into 500-post chunks, meta into base key
     await writeChunkedPool(kvStore, key, pool, {
       fetchedPages: fetchedPages,
+      curTermIdx: curTermIdx,
+      curTermPage: curTermPage,
       nextStart: nextStart,
       pageStarts: pageStarts,
       pageEnds: pageEnds,
@@ -445,34 +466,40 @@ export async function getPooledSearchPage(opts) {
     });
     return slice;
   } catch (e) {
-    // kvStore trouble: fall back to the old behaviour (just the
-    // requested site page) rather than breaking the search.
-    var fallback = (await fetchSitePage(page)) || [];
-    return fallback.slice(0, PAGE);
+    if (typeof fetchSitePage === "function") {
+      var fallback = (await fetchSitePage(page)) || [];
+      return fallback.slice(0, PAGE);
+    }
+    return [];
   }
 }
 
-// Every keyword the user named is kept — nothing is skipped. Tier 1 is
-// what these sites actually tag 3D content with; Tier 2 is the user's
-// own words; Tier 3 is animation/cartoon, because on adult sites 3D
-// means animation. Verified live 2026-11-18: every keyword returns
-// results on both sites (XV "daz3d" only 2, "vfx" only 2 — kept anyway).
-var THREE_D_KEYWORDS = [
+// Every keyword the user named is kept — nothing is skipped.
+// Search and sweep cover: 3d, animation, gameplay, walkthrough, cg, cgi, sfm, mmd,
+// blender, daz3d, vfx, sfx, fx, 3d animation, 3d cartoon, 3d hentai, cartoon.
+export var THREE_D_KEYWORDS = [
   { kw: "3d", tier: 1 },
+  { kw: "animation", tier: 1 },
+  { kw: "gameplay", tier: 1 },
+  { kw: "walkthrough", tier: 1 },
+  { kw: "cg", tier: 1 },
   { kw: "cgi", tier: 1 },
   { kw: "sfm", tier: 1 },
   { kw: "mmd", tier: 1 },
   { kw: "blender", tier: 1 },
   { kw: "daz3d", tier: 1 },
-  { kw: "3d animation", tier: 1 },
-  { kw: "3d cartoon", tier: 1 },
-  { kw: "3d hentai", tier: 1 },
   { kw: "vfx", tier: 2 },
   { kw: "sfx", tier: 2 },
   { kw: "fx", tier: 2 },
-  { kw: "animation", tier: 3 },
+  { kw: "3d animation", tier: 1 },
+  { kw: "3d cartoon", tier: 1 },
+  { kw: "3d hentai", tier: 1 },
   { kw: "cartoon", tier: 3 },
 ];
+
+export var THREE_D_KEYWORD_STRINGS = THREE_D_KEYWORDS.map(function (k) {
+  return k.kw;
+});
 
 function sleep(ms) {
   return new Promise(function (resolve) {

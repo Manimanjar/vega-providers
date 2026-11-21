@@ -15,6 +15,7 @@ import {
   keepLongEnough,
   getPooledCategoryPage,
   getPooledSearchPage,
+  THREE_D_KEYWORD_STRINGS,
 } from "../threeD";
 import { groupSeriesPosts } from "../series";
 
@@ -394,51 +395,40 @@ function build3DContext(opts) {
 // videos on-demand for pageNum in under a second.
 async function get3DPostsForFilter(ctx, filter, page, apiOpts) {
   var kvStore = ctx && ctx.kvStore;
-  var cached = null;
-  try {
-    cached = await read3DCache(kvStore);
-  } catch (e) {
-    cached = null;
+  if (filter === "homepage" || !filter) {
+    return getPooledSearchPage({
+      kvStore: kvStore,
+      query: "pornhub_3d_home",
+      page: page,
+      terms: THREE_D_KEYWORD_STRINGS,
+      fetchTermPage: function (term, sp) {
+        return searchApi(term, sp, apiOpts);
+      },
+    });
   }
-  if (cached) {
-    var bucket = getBucketPosts(cached, filter, page);
-    if (bucket && bucket.length > 0) return bucket;
+
+  var category = getCategory(filter);
+  var queries = category && category.xvideosQueries ? category.xvideosQueries : [];
+  if (queries.length === 0) {
+    queries = [filter.replace(/^rel_/, "")];
   }
-  var pageNum = Math.max(1, page || 1);
-  var direct = [];
-  try {
-    if (filter === "homepage" || !filter) {
-      var grids = await Promise.all([
-        searchApi("3d", pageNum, apiOpts).catch(function () { return []; }),
-        searchApi("sfm", pageNum, apiOpts).catch(function () { return []; }),
-      ]);
-      direct = dedupePosts(keepLongEnough((grids[0] || []).concat(grids[1] || [])));
-    } else {
-      var category = getCategory(filter);
-      var queries = category && category.xvideosQueries ? category.xvideosQueries : [];
-      if (queries.length === 0) {
-        queries = [filter.replace(/^rel_/, "")];
-      }
-      var primaryTerm = String(queries[0]).replace(/\+/g, " ").trim();
-      var grids = await Promise.all([
-        searchApi(primaryTerm + " 3d", pageNum, apiOpts).catch(function () { return []; }),
-        searchApi(primaryTerm + " sfm", pageNum, apiOpts).catch(function () { return []; }),
-      ]);
-      direct = dedupePosts(keepLongEnough((grids[0] || []).concat(grids[1] || [])));
-      if (direct.length === 0 && queries.length > 1) {
-        var secTerm = String(queries[1]).replace(/\+/g, " ").trim();
-        var secGrids = await Promise.all([
-          searchApi(secTerm + " 3d", pageNum, apiOpts).catch(function () { return []; }),
-          searchApi(secTerm + " sfm", pageNum, apiOpts).catch(function () { return []; }),
-        ]);
-        direct = dedupePosts(keepLongEnough((secGrids[0] || []).concat(secGrids[1] || [])));
-      }
+  var catTerms = [];
+  for (var qi = 0; qi < queries.length; qi++) {
+    var rawQ = String(queries[qi]).replace(/\+/g, " ").trim();
+    if (rawQ) {
+      catTerms.push(rawQ + " 3d");
+      catTerms.push(rawQ + " animation");
     }
-  } catch (e) {
-    direct = [];
   }
-  warm3DInBackground(ctx);
-  return direct;
+  return getPooledSearchPage({
+    kvStore: kvStore,
+    query: "pornhub_3d_cat_" + filter,
+    page: page,
+    terms: catTerms,
+    fetchTermPage: function (term, sp) {
+      return searchApi(term, sp, apiOpts);
+    },
+  });
 }
 
 const getPostsImpl = async function (params) {
@@ -484,10 +474,8 @@ const getPostsImpl = async function (params) {
   }
 
   if (category && category.mode === "random_feed") {
-    // Homepage: the API's general feed (empty search). A random page
-    // on every refresh so the home does not repeat itself.
-    var randomPage = Math.floor(Math.random() * 20) + 1;
-    return searchApi("", randomPage, apiOpts);
+    // General homepage sequential feed: page 1, 2, 3... till the last page!
+    return searchApi("", page, apiOpts);
   }
 
   if (category && category.mode === "multi_query") {
@@ -570,22 +558,6 @@ const getSearchPostsImpl = async function (params) {
   // below still returns real 3D results, and the sweep is kicked off
   // in the background.
   var threeDOn = await is3DOn(kvStore);
-  var cached = null;
-  if (threeDOn) {
-    var threeDContext = build3DContext({
-      axios: axios,
-      cheerio: cheerio,
-      commonHeaders: commonHeaders,
-      signal: signal,
-      kvStore: kvStore,
-    });
-    try {
-      cached = await read3DCache(kvStore);
-    } catch (e) {
-      cached = null;
-    }
-    if (!cached) warm3DInBackground(threeDContext);
-  }
 
   var apiOpts = {
     axios: axios,
@@ -595,43 +567,31 @@ const getSearchPostsImpl = async function (params) {
     kvStore: kvStore,
   };
 
-  // One API search page. In 3D mode the plain page is intersected with
-  // the verified pool and a direct "<query> 3d" search is added (the
-  // API search is full-text AND, so this finds 3D matches beyond the
-  // cached pool). Dedupe + under-2-min filter, as usual.
-  var fetchSitePage = async function (sp) {
-    var plain = await searchApi(searchQuery, sp, apiOpts);
-    if (!threeDOn) return plain;
-    var matched = cached
-      ? intersectWithPool(plain, cached)
-      : plain.filter(function (p) {
-          return titleMatchesAnyKeyword(p.title);
-        });
-    var direct = await searchApi(searchQuery + " 3d", sp, apiOpts);
-    return dedupePosts(keepLongEnough(matched.concat(direct)));
-  };
-
-  // 3D pool matches for this query (same on every call; the pool cache
-  // dedupes them to a single copy). Empty in normal mode.
-  var extraPosts = [];
-  if (threeDOn && cached) {
-    extraPosts = dedupePosts(
-      keepLongEnough(
-        poolTitleSearch(cached, searchQuery).concat(
-          poolCategorySearch(cached, searchQuery)
-        )
-      )
-    );
+  if (threeDOn) {
+    var terms = THREE_D_KEYWORD_STRINGS.map(function (kw) {
+      return normQuery + " " + kw;
+    });
+    return getPooledSearchPage({
+      kvStore: kvStore,
+      query: "3d:" + normQuery,
+      page: page,
+      terms: terms,
+      fetchTermPage: function (term, sp) {
+        return searchApi(term, sp, apiOpts);
+      },
+    });
   }
 
-  // The search pool serves a different 60-video slice per app page, so
-  // scrolling a search keeps showing new videos — never page 1 again.
+  // General content: sequential site search from page 1 till last page
+  var fetchSitePage = function (sp) {
+    return searchApi(searchQuery, sp, apiOpts);
+  };
+
   return getPooledSearchPage({
     kvStore: kvStore,
     query: normQuery,
     page: page,
     fetchSitePage: fetchSitePage,
-    extraPosts: extraPosts,
   });
 };
 

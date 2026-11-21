@@ -15,6 +15,7 @@ import {
   keepLongEnough,
   getPooledCategoryPage,
   getPooledSearchPage,
+  THREE_D_KEYWORD_STRINGS,
 } from "../threeD";
 import { groupSeriesPosts } from "../series";
 
@@ -182,41 +183,58 @@ async function parseVideoGrid(options) {
   var signal = options.signal;
   var kvStore = options.kvStore;
 
+  var candidateBases = [baseUrl, "https://www.xvideos2.com", "https://www.xvideos3.com"];
+  var seenBases = {};
+  var uniqueBases = [];
+  for (var b = 0; b < candidateBases.length; b++) {
+    var cb = String(candidateBases[b] || "").replace(/\/+$/, "");
+    if (cb && !seenBases[cb]) {
+      seenBases[cb] = true;
+      uniqueBases.push(cb);
+    }
+  }
+
   try {
-    // XVideos rate-limits (HTTP 429) when searches come fast — the
-    // 3D sweep alone fires ~76 of them. One retry after a short
-    // pause recovers a throttled search instead of silently losing
-    // that whole term's videos (the bucket would quietly miss them).
     var res = null;
     var lastErr = null;
-    for (var attempt = 0; attempt < 2; attempt++) {
+    for (var bi = 0; bi < uniqueBases.length; bi++) {
+      var currentBase = uniqueBases[bi];
+      var targetUrl = url;
       try {
-        res = await axios.get(url, {
-          timeout: 12000,
-          headers: Object.assign({}, commonHeaders, {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            Referer: baseUrl + "/",
-            Origin: baseUrl,
-            Accept: "*/*",
-          }),
-          signal: signal,
-          maxRedirects: 5,
-        });
-        break;
-      } catch (e) {
-        lastErr = e;
-        var status = e && e.response && e.response.status;
-        if (status === 429 && attempt === 0) {
-          await new Promise(function (resolve) {
-            setTimeout(resolve, 2500);
+        var parsedTarget = new URL(url);
+        targetUrl = currentBase + parsedTarget.pathname + parsedTarget.search;
+      } catch (e) {}
+
+      for (var attempt = 0; attempt < 2; attempt++) {
+        try {
+          res = await axios.get(targetUrl, {
+            timeout: 10000,
+            headers: Object.assign({}, commonHeaders, {
+              "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              Referer: currentBase + "/",
+              Origin: currentBase,
+              Accept: "*/*",
+            }),
+            signal: signal,
+            maxRedirects: 5,
           });
-          continue;
+          break;
+        } catch (e) {
+          lastErr = e;
+          var status = e && e.response && e.response.status;
+          if (status === 429 && attempt === 0) {
+            await new Promise(function (resolve) {
+              setTimeout(resolve, 1500);
+            });
+            continue;
+          }
+          break;
         }
-        throw e;
       }
+      if (res && res.status === 200) break;
     }
-    if (!res) throw lastErr || new Error("no response");
+    if (!res) throw lastErr || new Error("no response from any mirror");
 
     updateLearnedDomain(res, baseUrl, kvStore);
 
@@ -471,73 +489,64 @@ async function get3DPostsForFilter(ctx, filter, page) {
   var signal = ctx.signal;
   var kvStore = ctx.kvStore;
 
-  var pageNum = Math.max(1, page || 1);
-  var pageIndex = pageNum - 1;
-
-  // 1. Homepage in 3D mode:
   if (filter === "homepage" || !filter) {
-    var homeUrl =
-      baseUrl + "/?k=" + encodeURIComponent("3d animation") + "&sort=length&p=" + pageIndex;
-    return parseVideoGrid({
-      url: homeUrl,
-      baseUrl: baseUrl,
-      axios: axios,
-      cheerio: cheerio,
-      commonHeaders: commonHeaders,
-      signal: signal,
+    return getPooledSearchPage({
       kvStore: kvStore,
+      query: "xvideos_3d_home",
+      page: page,
+      terms: THREE_D_KEYWORD_STRINGS,
+      fetchTermPage: function (term, sp) {
+        var pageIndex = Math.max(0, sp - 1);
+        var targetUrl =
+          baseUrl + "/?k=" + encodeURIComponent(term) + "&sort=length&p=" + pageIndex;
+        return parseVideoGrid({
+          url: targetUrl,
+          baseUrl: baseUrl,
+          axios: axios,
+          cheerio: cheerio,
+          commonHeaders: commonHeaders,
+          signal: signal,
+          kvStore: kvStore,
+        });
+      },
     });
   }
 
-  // 2. Specific category in 3D mode:
   var category = getCategory(filter);
   var queries = category && category.xvideosQueries ? category.xvideosQueries : [];
   if (queries.length === 0) {
     queries = [filter.replace(/^rel_/, "")];
   }
 
-  var primaryQuery = String(queries[0]).replace(/\+/g, " ").trim();
-  var targetUrl =
-    baseUrl +
-    "/?k=" +
-    encodeURIComponent(primaryQuery + " 3d") +
-    "&sort=length&p=" +
-    pageIndex;
+  var catTerms = [];
+  for (var qi = 0; qi < queries.length; qi++) {
+    var rawQ = String(queries[qi]).replace(/\+/g, " ").trim();
+    if (rawQ) {
+      catTerms.push(rawQ + " 3d");
+      catTerms.push(rawQ + " animation");
+    }
+  }
 
-  var posts = await parseVideoGrid({
-    url: targetUrl,
-    baseUrl: baseUrl,
-    axios: axios,
-    cheerio: cheerio,
-    commonHeaders: commonHeaders,
-    signal: signal,
+  return getPooledSearchPage({
     kvStore: kvStore,
+    query: "xvideos_3d_cat_" + filter,
+    page: page,
+    terms: catTerms,
+    fetchTermPage: function (term, sp) {
+      var pageIndex = Math.max(0, sp - 1);
+      var targetUrl =
+        baseUrl + "/?k=" + encodeURIComponent(term) + "&sort=length&p=" + pageIndex;
+      return parseVideoGrid({
+        url: targetUrl,
+        baseUrl: baseUrl,
+        axios: axios,
+        cheerio: cheerio,
+        commonHeaders: commonHeaders,
+        signal: signal,
+        kvStore: kvStore,
+      });
+    },
   });
-
-  if (posts && posts.length > 0) {
-    return posts;
-  }
-
-  // If first query returned 0, try second query if available
-  if (queries.length > 1) {
-    var secondQuery = String(queries[1]).replace(/\+/g, " ").trim();
-    return parseVideoGrid({
-      url:
-        baseUrl +
-        "/?k=" +
-        encodeURIComponent(secondQuery + " 3d") +
-        "&sort=length&p=" +
-        pageIndex,
-      baseUrl: baseUrl,
-      axios: axios,
-      cheerio: cheerio,
-      commonHeaders: commonHeaders,
-      signal: signal,
-      kvStore: kvStore,
-    });
-  }
-
-  return [];
 }
 
 const getPostsImpl = async function (params) {
@@ -586,14 +595,10 @@ const getPostsImpl = async function (params) {
   }
 
   if (category && category.mode === "random_feed") {
-    // FIX (black screen): XVideos returns HTTP 500 for an empty search
-    // "/?k=&p=<n>" on every page (verified live 2026-11-17). The plain
-    // homepage "/" and "/new/<n>/" both return 200, so the random
-    // Homepage feed now uses /new/<random>/ instead.
-    var randomPage = Math.floor(Math.random() * 35) + 1;
-    var randomUrl = baseUrl + "/new/" + randomPage + "/?_t=" + Date.now();
-    var posts = await parseVideoGrid({
-      url: randomUrl,
+    // General homepage sequential feed: page 1, 2, 3... till the last page!
+    var targetUrl = page === 1 ? baseUrl + "/" : baseUrl + "/new/" + page + "/";
+    return parseVideoGrid({
+      url: targetUrl,
       baseUrl: baseUrl,
       axios: axios,
       cheerio: cheerio,
@@ -601,9 +606,6 @@ const getPostsImpl = async function (params) {
       signal: signal,
       kvStore: kvStore,
     });
-    // The page itself is random on every refresh; within it the
-    // videos are alphabetical so parts of a clip stay together.
-    return posts;
   }
 
   if (category && category.mode === "multi_query") {
@@ -750,12 +752,37 @@ const getSearchPostsImpl = async function (params) {
 
   var threeDOn = await is3DOn(kvStore);
 
-  // One site search page (sp is 1-based; XVideos search pages are 0-indexed: &p=<sp-1>)
-  var fetchSitePage = async function (sp) {
+  if (threeDOn) {
+    var terms = THREE_D_KEYWORD_STRINGS.map(function (kw) {
+      return normQuery + " " + kw;
+    });
+    return getPooledSearchPage({
+      kvStore: kvStore,
+      query: "3d:" + normQuery,
+      page: page,
+      terms: terms,
+      fetchTermPage: function (term, sp) {
+        var pageIndex = Math.max(0, sp - 1);
+        var targetUrl =
+          baseUrl + "/?k=" + encodeURIComponent(term) + "&sort=length&p=" + pageIndex;
+        return parseVideoGrid({
+          url: targetUrl,
+          baseUrl: baseUrl,
+          axios: axios,
+          cheerio: cheerio,
+          commonHeaders: commonHeaders,
+          signal: signal,
+          kvStore: kvStore,
+        });
+      },
+    });
+  }
+
+  // General content: sequential site search from page 1 till last page
+  var fetchSitePage = function (sp) {
     var pageIndex = Math.max(0, sp - 1);
-    var searchStr = threeDOn ? (searchQuery.trim() + " 3d") : searchQuery.trim();
     var targetUrl =
-      baseUrl + "/?k=" + encodeURIComponent(searchStr) + "&sort=length&p=" + pageIndex;
+      baseUrl + "/?k=" + encodeURIComponent(searchQuery.trim()) + "&sort=length&p=" + pageIndex;
     return parseVideoGrid({
       url: targetUrl,
       baseUrl: baseUrl,
@@ -769,10 +796,9 @@ const getSearchPostsImpl = async function (params) {
 
   return getPooledSearchPage({
     kvStore: kvStore,
-    query: normQuery + (threeDOn ? " 3d" : ""),
+    query: normQuery,
     page: page,
     fetchSitePage: fetchSitePage,
-    extraPosts: [],
   });
 };
 

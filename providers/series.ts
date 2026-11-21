@@ -101,9 +101,9 @@ export function parsePartTitle(title) {
     }
   }
 
-  // Explicit marker: "Part 2", "Pt. 3", "Episode 4", "Ep 1", "Ch. 5".
+  // Explicit marker: "Part 2", "Pt. 3", "Episode 4", "Ep 1", "Ch. 5", "Volume 1", "Vol 2", "Vol. 3", "V 1", "#1".
   m = clean.match(
-    /^(.*?)\s*[-–—:]?\s*(?:part|pt\.?|episode|ep\.?|chapter|ch\.?)\s*(\d+(?:\.\d+)?)\b\s*(.*)$/i
+    /^(.*?)\s*[-–—:]?\s*(?:part|pt\.?|volume|vol\.?|v\.?|episode|ep\.?|chapter|ch\.?|season|s\.?|book|bk\.?|#)\s*(\d+(?:\.\d+)?)\b\s*(.*)$/i
   );
   if (m) {
     var base1 = m[1].trim().replace(/[-–—:]+$/, "").trim();
@@ -361,6 +361,12 @@ export async function fetchSeriesParts(opts) {
   var searchUrl;
   if (site === "xvideos") {
     searchUrl = baseUrl + "/?k=" + encodeURIComponent(baseTitle) + "&p=0";
+  } else if (site === "pornhub") {
+    searchUrl =
+      baseUrl +
+      "/webmasters/search?search=" +
+      encodeURIComponent(baseTitle) +
+      "&thumbsize=large_hd";
   } else {
     searchUrl =
       baseUrl + "/search/" + encodeURIComponent(baseTitle.trim().replace(/\s+/g, "-")) + "/";
@@ -370,9 +376,7 @@ export async function fetchSeriesParts(opts) {
   try {
     // One retry: this runs when the user opens a video's detail
     // screen, and a single transient timeout would silently drop
-    // the whole parts list (the detail falls back to a plain
-    // movie). A second attempt 800ms later costs nothing when the
-    // first succeeds.
+    // the whole parts list.
     var res = null;
     var lastErr = null;
     for (var attempt = 0; attempt < 2; attempt++) {
@@ -398,93 +402,140 @@ export async function fetchSeriesParts(opts) {
       }
     }
     if (!res) throw lastErr || new Error("series search failed");
-    var $ = cheerio.load(res.data || "");
-    if (site === "xvideos") {
-      $(".thumb-block").each(function (_, element) {
-        var $el = $(element);
-        var titleLink = $el.find("p.title a, .thumb-under p.title a, .title a").first();
-        var rawTitle = titleLink.attr("title") || "";
-        if (!rawTitle) {
-          var cloned = titleLink.clone();
-          cloned.find("span").remove();
-          rawTitle = cloned.text().trim();
-        }
-        var rawHref = titleLink.attr("href") || $el.find(".thumb-inside a").first().attr("href") || "";
-        if (!rawHref || !rawTitle) return;
-        var img = $el.find("img").first();
-        var image = img.attr("data-src") || img.attr("data-srcset") || img.attr("src") || "";
-        var durText = $el.find(".duration, .video-duration").first().text().trim();
+
+    if (site === "pornhub") {
+      var vids = res.data && Array.isArray(res.data.videos) ? res.data.videos : [];
+      for (var vi = 0; vi < vids.length; vi++) {
+        var v = vids[vi];
+        if (!v || !v.title || !v.url) continue;
         var durSec = 0;
-        var mm = durText.match(/(\d+)\s*min/i);
-        var ss = durText.match(/(\d+)\s*sec/i);
-        var hh = durText.match(/(\d+)\s*h/i);
-        if (hh) durSec += parseInt(hh[1], 10) * 3600;
-        if (mm) durSec += parseInt(mm[1], 10) * 60;
-        if (ss) durSec += parseInt(ss[1], 10);
+        if (typeof v.duration === "number") durSec = v.duration;
+        else if (typeof v.duration === "string") {
+          var dp = v.duration.split(":").map(function (x) { return parseInt(x, 10) || 0; });
+          if (dp.length === 3) durSec = dp[0] * 3600 + dp[1] * 60 + dp[2];
+          else if (dp.length === 2) durSec = dp[0] * 60 + dp[1];
+          else if (dp.length === 1) durSec = dp[0];
+        }
+        var thumb = v.default_thumb || (v.thumbs && v.thumbs[0] && v.thumbs[0].src) || "";
         posts.push({
-          title: rawTitle,
-          link: rawHref.startsWith("http") ? rawHref : baseUrl + (rawHref.startsWith("/") ? "" : "/") + rawHref,
-          image: image,
+          title: v.title,
+          link: v.url,
+          image: thumb,
           _dur: durSec,
         });
-      });
-    } else {
-      $(".item.thumb, [data-video-card-id]").each(function (_, element) {
-        var $el = $(element);
-        var a = $el.find("a.th, a[href*=\"/video/\"]").first();
-        var rawHref = a.attr("href") || "";
-        var rawTitle = a.attr("title") || $el.find("img.thumb").attr("alt") || "";
-        if (!rawHref || !rawTitle) return;
-        // Skip non-video cards (channels, collections).
-        if (rawHref.indexOf("/video/") === -1 && rawHref.indexOf("/videos/") === -1) return;
-        var img = $el.find("img.thumb, img").first();
-        var image =
-          img.attr("data-rd-jpg") ||
-          img.attr("data-src") ||
-          img.attr("src") ||
-          "";
-        // Cards below the fold are lazy-loaded: src is a 1px data:
-        // placeholder and the real thumb lives in data-rd-jpg (read
-        // above). If every source is a placeholder or missing, fall
-        // back to the video's own preview poster (built from its ID)
-        // so a part never gets an invisible thumbnail.
-        if (!image || image.indexOf("data:") === 0) {
-          var idm = String(rawHref).match(/\/video\/(\d+)/);
-          if (idm) {
-            var vid2 = parseInt(idm[1], 10);
-            var bucket2 = Math.floor(vid2 / 10000) * 10000;
-            image = baseUrl + "/contents/videos_screenshots/" + bucket2 + "/" + vid2 + "/preview.jpg";
+      }
+      // If page 1 filled up to 30, fetch page 2 to gather any further parts of the series
+      if (vids.length >= 30) {
+        try {
+          var res2 = await axios.get(searchUrl + "&page=2", {
+            headers: Object.assign({}, commonHeaders, {
+              "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              Referer: baseUrl + "/",
+            }),
+            timeout: 10000,
+            signal: signal,
+          });
+          var vids2 = res2.data && Array.isArray(res2.data.videos) ? res2.data.videos : [];
+          for (var vi2 = 0; vi2 < vids2.length; vi2++) {
+            var v2 = vids2[vi2];
+            if (!v2 || !v2.title || !v2.url) continue;
+            var durSec2 = 0;
+            if (typeof v2.duration === "number") durSec2 = v2.duration;
+            else if (typeof v2.duration === "string") {
+              var dp2 = v2.duration.split(":").map(function (x) { return parseInt(x, 10) || 0; });
+              if (dp2.length === 3) durSec2 = dp2[0] * 3600 + dp2[1] * 60 + dp2[2];
+              else if (dp2.length === 2) durSec2 = dp2[0] * 60 + dp2[1];
+              else if (dp2.length === 1) durSec2 = dp2[0];
+            }
+            var thumb2 = v2.default_thumb || (v2.thumbs && v2.thumbs[0] && v2.thumbs[0].src) || "";
+            posts.push({
+              title: v2.title,
+              link: v2.url,
+              image: thumb2,
+              _dur: durSec2,
+            });
           }
-        }
-        // Cards below the fold are lazy-loaded: src is a 1px data:
-        // placeholder and the real thumb never arrives in the HTML.
-        // Fall back to the video's own preview poster (built from
-        // its ID) so a part never gets an invisible thumbnail.
-        if (!image || image.indexOf("data:") === 0) {
-          var absLink = rawHref.startsWith("http") ? rawHref : baseUrl + (rawHref.startsWith("/") ? "" : "/") + rawHref;
-          image = r34PreviewFromLink(absLink, baseUrl) || image;
-        }
-        var durText = $el.find(".time").first().text().trim();
-        var durSec = 0;
-        var parts = durText.split(":").map(function (x) { return parseInt(x, 10) || 0; });
-        if (parts.length === 2) durSec = parts[0] * 60 + parts[1];
-        else if (parts.length === 3) durSec = parts[0] * 3600 + parts[1] * 60 + parts[2];
-        posts.push({
-          title: rawTitle,
-          link: rawHref.startsWith("http") ? rawHref : baseUrl + (rawHref.startsWith("/") ? "" : "/") + rawHref,
-          image: image,
-          _dur: durSec,
+        } catch (e2) {}
+      }
+    } else {
+      var $ = cheerio.load(res.data || "");
+      if (site === "xvideos") {
+        $(".thumb-block").each(function (_, element) {
+          var $el = $(element);
+          var titleLink = $el.find("p.title a, .thumb-under p.title a, .title a").first();
+          var rawTitle = titleLink.attr("title") || "";
+          if (!rawTitle) {
+            var cloned = titleLink.clone();
+            cloned.find("span").remove();
+            rawTitle = cloned.text().trim();
+          }
+          var rawHref = titleLink.attr("href") || $el.find(".thumb-inside a").first().attr("href") || "";
+          if (!rawHref || !rawTitle) return;
+          var img = $el.find("img").first();
+          var image = img.attr("data-src") || img.attr("data-srcset") || img.attr("src") || "";
+          var durText = $el.find(".duration, .video-duration").first().text().trim();
+          var durSec = 0;
+          var mm = durText.match(/(\d+)\s*min/i);
+          var ss = durText.match(/(\d+)\s*sec/i);
+          var hh = durText.match(/(\d+)\s*h/i);
+          if (hh) durSec += parseInt(hh[1], 10) * 3600;
+          if (mm) durSec += parseInt(mm[1], 10) * 60;
+          if (ss) durSec += parseInt(ss[1], 10);
+          posts.push({
+            title: rawTitle,
+            link: rawHref.startsWith("http") ? rawHref : baseUrl + (rawHref.startsWith("/") ? "" : "/") + rawHref,
+            image: image,
+            _dur: durSec,
+          });
         });
-      });
+      } else {
+        $(".item.thumb, [data-video-card-id]").each(function (_, element) {
+          var $el = $(element);
+          var a = $el.find("a.th, a[href*=\"/video/\"]").first();
+          var rawHref = a.attr("href") || "";
+          var rawTitle = a.attr("title") || $el.find("img.thumb").attr("alt") || "";
+          if (!rawHref || !rawTitle) return;
+          // Skip non-video cards (channels, collections).
+          if (rawHref.indexOf("/video/") === -1 && rawHref.indexOf("/videos/") === -1) return;
+          var img = $el.find("img.thumb, img").first();
+          var image =
+            img.attr("data-rd-jpg") ||
+            img.attr("data-src") ||
+            img.attr("src") ||
+            "";
+          if (!image || image.indexOf("data:") === 0) {
+            var idm = String(rawHref).match(/\/video\/(\d+)/);
+            if (idm) {
+              var vid2 = parseInt(idm[1], 10);
+              var bucket2 = Math.floor(vid2 / 10000) * 10000;
+              image = baseUrl + "/contents/videos_screenshots/" + bucket2 + "/" + vid2 + "/preview.jpg";
+            }
+          }
+          if (!image || image.indexOf("data:") === 0) {
+            var absLink = rawHref.startsWith("http") ? rawHref : baseUrl + (rawHref.startsWith("/") ? "" : "/") + rawHref;
+            image = r34PreviewFromLink(absLink, baseUrl) || image;
+          }
+          var durText = $el.find(".time").first().text().trim();
+          var durSec = 0;
+          var parts = durText.split(":").map(function (x) { return parseInt(x, 10) || 0; });
+          if (parts.length === 2) durSec = parts[0] * 60 + parts[1];
+          else if (parts.length === 3) durSec = parts[0] * 3600 + parts[1] * 60 + parts[2];
+          posts.push({
+            title: rawTitle,
+            link: rawHref.startsWith("http") ? rawHref : baseUrl + (rawHref.startsWith("/") ? "" : "/") + rawHref,
+            image: image,
+            _dur: durSec,
+          });
+        });
+      }
     }
   } catch (e) {
     return [];
   }
 
   // Keep only true parts of this series: same parsed base, or a named
-  // part starting with the base. This is what stops XVideos' noisy
-  // free-text search ("Three Rules Of Life", "My House My Rules")
-  // from polluting a "Family Rules" series.
+  // part starting with the base.
   var seen = {};
   var kept = [];
   for (var i = 0; i < posts.length; i++) {
@@ -537,5 +588,5 @@ export async function fetchSeriesParts(opts) {
   }
 
   var sorted = sortParts(kept);
-  return sorted.slice(0, 60);
+  return sorted.slice(0, 200);
 }

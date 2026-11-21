@@ -2,7 +2,7 @@
     {
         "display_name": "XVideos",
         "value": "xvideos",
-        "version": "2.3.5",
+        "version": "2.4.0",
         "icon": "https://cdn-icons-png.flaticon.com/512/831/831331.png",
         "type": "global",
         "disabled": false,
@@ -11,7 +11,7 @@
     {
         "display_name": "Rule34Video",
         "value": "rule34video",
-        "version": "2.3.6",
+        "version": "2.4.0",
         "icon": "https://rule34video.com/apple-touch-icon.png",
         "type": "global",
         "disabled": false,
@@ -20,7 +20,7 @@
     {
         "display_name": "PornHub",
         "value": "pornhub",
-        "version": "2.3.9",
+        "version": "2.4.0",
         "icon": "https://www.pornhub.com/favicon.ico",
         "type": "global",
         "disabled": false,

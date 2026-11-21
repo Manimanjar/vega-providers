@@ -1,4 +1,5 @@
 import { Info, ProviderContext } from "../types";
+import { parsePartTitle, fetchSeriesParts } from "../series";
 
 var URLS_ENDPOINT =
   "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
@@ -299,9 +300,57 @@ export const getMeta = async function ({
     }
   }
 
-  // Safety fallbacks if both API and HTML were incomplete
-  if (!title) title = "Video";
-  if (!synopsis) synopsis = `Watch ${title} on PornHub.`;
+  // Parts grouping: if this video is a numbered part of a series,
+  // expand all parts serial-wise in the details view
+  var parsed = parsePartTitle(title);
+  if (parsed && parsed.partNum != null) {
+    var seriesParts: any[] = [];
+    try {
+      seriesParts = await fetchSeriesParts({
+        axios: axios,
+        cheerio: cheerio,
+        baseUrl: baseUrl,
+        site: "pornhub",
+        baseTitle: parsed.base,
+        commonHeaders: commonHeaders,
+      });
+    } catch (e) {
+      seriesParts = [];
+    }
+    if (seriesParts.length >= 2) {
+      var firstImage = (seriesParts[0] && seriesParts[0].image) || image;
+      var cleanFirstImage = upgradePornhubImageUrl(firstImage);
+      var seriesSynopsisParts = [
+        parsed.base + " — " + seriesParts.length + " parts.",
+      ];
+      if (cast.length > 0) {
+        seriesSynopsisParts.push("Starring " + cast.join(", ") + ".");
+      }
+      if (tags.length > 0) {
+        seriesSynopsisParts.push("Tags: " + tags.join(", ") + ".");
+      }
+      return {
+        title: parsed.base,
+        synopsis: seriesSynopsisParts.join(" "),
+        image: cleanFirstImage,
+        poster: cleanFirstImage,
+        imdbId: "",
+        type: "series",
+        tags: tags.length > 0 ? tags : undefined,
+        cast: cast.length > 0 ? cast : undefined,
+        rating: rating > 0 ? (rating > 10 ? (rating / 10).toFixed(1) + "/10" : String(rating)) : undefined,
+        webUrl: link.startsWith("http") ? link : `${baseUrl}${link.startsWith("/") ? "" : "/"}${link}`,
+        linkList: [
+          {
+            title: "Parts",
+            directLinks: seriesParts.map(function (p) {
+              return { title: p.title, link: p.link, type: "movie" };
+            }),
+          },
+        ],
+      };
+    }
+  }
 
   const info: Info = {
     title,

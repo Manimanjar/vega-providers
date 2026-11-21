@@ -15,6 +15,7 @@ import {
   keepLongEnough,
   getPooledCategoryPage,
   getPooledSearchPage,
+  THREE_D_KEYWORD_STRINGS,
 } from "../threeD";
 import { groupSeriesPosts } from "../series";
 
@@ -750,28 +751,32 @@ async function get3DPostsForFilter(ctx, filter, page) {
   var signal = ctx.signal;
   var kvStore = ctx.kvStore;
 
-  var pageNum = Math.max(1, page || 1);
-
-  // 1. Homepage in 3D mode: Rule34Video has a dedicated /categories/3d/ section
   if (filter === "homepage" || !filter) {
-    var homeUrl =
-      pageNum > 1
-        ? baseUrl + "/categories/3d/" + pageNum + "/"
-        : baseUrl + "/categories/3d/";
-    return parseVideoGrid({
-      url: homeUrl,
-      baseUrl: baseUrl,
-      axios: axios,
-      cheerio: cheerio,
-      commonHeaders: commonHeaders,
-      signal: signal,
+    return getPooledSearchPage({
       kvStore: kvStore,
-      requireVideo: true,
+      query: "r34_3d_home",
+      page: page,
+      terms: THREE_D_KEYWORD_STRINGS,
+      fetchTermPage: function (term, sp) {
+        var cleanTerm = encodeURIComponent(term.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-"));
+        var targetUrl =
+          sp > 1
+            ? baseUrl + "/search/" + cleanTerm + "/" + sp + "/"
+            : baseUrl + "/search/" + cleanTerm + "/";
+        return parseVideoGrid({
+          url: targetUrl,
+          baseUrl: baseUrl,
+          axios: axios,
+          cheerio: cheerio,
+          commonHeaders: commonHeaders,
+          signal: signal,
+          kvStore: kvStore,
+          requireVideo: true,
+        });
+      },
     });
   }
 
-  // 2. Relation / category filtering in 3D mode:
-  // Map filter to its verified 3D category tag on Rule34Video
   var tagMap = {
     family: "family",
     incest: "incest",
@@ -787,45 +792,41 @@ async function get3DPostsForFilter(ctx, filter, page) {
   };
 
   var tag = tagMap[filter];
+  var catTerms = [];
   if (tag) {
-    var tagUrl =
-      pageNum > 1
-        ? baseUrl + "/categories/3d/" + pageNum + "/?tag=" + encodeURIComponent(tag)
-        : baseUrl + "/categories/3d/?tag=" + encodeURIComponent(tag);
-    var tagPosts = await parseVideoGrid({
-      url: tagUrl,
-      baseUrl: baseUrl,
-      axios: axios,
-      cheerio: cheerio,
-      commonHeaders: commonHeaders,
-      signal: signal,
-      kvStore: kvStore,
-      requireVideo: true,
-    });
-    if (tagPosts && tagPosts.length > 0) {
-      return tagPosts;
-    }
+    catTerms.push(tag + "-3d");
+    catTerms.push(tag + "-animation");
+    catTerms.push(tag + "-sfm");
+    catTerms.push(tag + "-gameplay");
+    catTerms.push(tag + "-cg");
+  } else {
+    var primaryTerm = primaryTermFor(filter, "rule34video") || filter;
+    catTerms.push(primaryTerm.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-3d");
+    catTerms.push(primaryTerm.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-animation");
   }
 
-  // 3. Fallback: Search with -3d keyword on Rule34Video
-  var primaryTerm = primaryTermFor(filter, "rule34video") || filter;
-  var searchClean = encodeURIComponent(
-    primaryTerm.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-3d"
-  );
-  var fallbackUrl =
-    pageNum > 1
-      ? baseUrl + "/search/" + searchClean + "/" + pageNum + "/"
-      : baseUrl + "/search/" + searchClean + "/";
-
-  return parseVideoGrid({
-    url: fallbackUrl,
-    baseUrl: baseUrl,
-    axios: axios,
-    cheerio: cheerio,
-    commonHeaders: commonHeaders,
-    signal: signal,
+  return getPooledSearchPage({
     kvStore: kvStore,
-    requireVideo: true,
+    query: "r34_3d_cat_" + filter,
+    page: page,
+    terms: catTerms,
+    fetchTermPage: function (term, sp) {
+      var cleanTerm = encodeURIComponent(term);
+      var targetUrl =
+        sp > 1
+          ? baseUrl + "/search/" + cleanTerm + "/" + sp + "/"
+          : baseUrl + "/search/" + cleanTerm + "/";
+      return parseVideoGrid({
+        url: targetUrl,
+        baseUrl: baseUrl,
+        axios: axios,
+        cheerio: cheerio,
+        commonHeaders: commonHeaders,
+        signal: signal,
+        kvStore: kvStore,
+        requireVideo: true,
+      });
+    },
   });
 }
 
@@ -874,20 +875,18 @@ const getPostsImpl = async function (params) {
   }
 
   if (category && category.mode === "random_feed") {
-    var randomPage = Math.floor(Math.random() * 35) + 1;
-    var randomUrl = baseUrl + "/" + randomPage + "/?_t=" + Date.now();
-    var posts = await parseVideoGrid({
-      url: randomUrl,
+    // General homepage sequential feed: page 1, 2, 3... till the last page!
+    var targetUrl = page === 1 ? baseUrl + "/" : baseUrl + "/" + page + "/";
+    return parseVideoGrid({
+      url: targetUrl,
       baseUrl: baseUrl,
       axios: axios,
       cheerio: cheerio,
       commonHeaders: commonHeaders,
       signal: signal,
       kvStore: kvStore,
+      requireVideo: true,
     });
-    // The page itself is random on every refresh; within it the
-    // videos are alphabetical so parts of a clip stay together.
-    return posts;
   }
 
   if (category && category.mode === "multi_query") {
@@ -1023,15 +1022,40 @@ const getSearchPostsImpl = async function (params) {
 
   var threeDOn = await is3DOn(kvStore);
 
-  // One site search page (sp is 1-based). In 3D mode, query directly with -3d suffix
-  var fetchSitePage = async function (sp) {
-    var searchDash = threeDOn
-      ? encodeURIComponent(cleanQuery + "-3d")
-      : cleanQuery;
+  if (threeDOn) {
+    var terms = THREE_D_KEYWORD_STRINGS.map(function (kw) {
+      return cleanQuery + "-" + encodeURIComponent(kw.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-"));
+    });
+    return getPooledSearchPage({
+      kvStore: kvStore,
+      query: "3d:" + normQuery,
+      page: page,
+      terms: terms,
+      fetchTermPage: function (term, sp) {
+        var targetUrl =
+          sp > 1
+            ? baseUrl + "/search/" + term + "/" + sp + "/"
+            : baseUrl + "/search/" + term + "/";
+        return parseVideoGrid({
+          url: targetUrl,
+          baseUrl: baseUrl,
+          axios: axios,
+          cheerio: cheerio,
+          commonHeaders: commonHeaders,
+          signal: signal,
+          kvStore: kvStore,
+          requireVideo: true,
+        });
+      },
+    });
+  }
+
+  // General content: sequential site search from page 1 till last page
+  var fetchSitePage = function (sp) {
     var targetUrl =
       sp > 1
-        ? baseUrl + "/search/" + searchDash + "/" + sp + "/"
-        : baseUrl + "/search/" + searchDash + "/";
+        ? baseUrl + "/search/" + cleanQuery + "/" + sp + "/"
+        : baseUrl + "/search/" + cleanQuery + "/";
     return parseVideoGrid({
       url: targetUrl,
       baseUrl: baseUrl,
@@ -1046,10 +1070,9 @@ const getSearchPostsImpl = async function (params) {
 
   return getPooledSearchPage({
     kvStore: kvStore,
-    query: normQuery + (threeDOn ? " 3d" : ""),
+    query: normQuery,
     page: page,
     fetchSitePage: fetchSitePage,
-    extraPosts: [],
   });
 };
 
