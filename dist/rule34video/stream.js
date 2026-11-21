@@ -1,5 +1,5 @@
 // @vega-provider rule34video
-// @vega-version 2.3.5
+// @vega-version 2.3.6
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -141,6 +141,7 @@ var getStream = async function({
       maxRedirects: 5
     });
     const html = res.data;
+    const pageCookies = (res.headers["set-cookie"] || []).map((c) => c.split(";")[0]).join("; ");
     const streams = [];
     const addedUrls = /* @__PURE__ */ new Set();
     const seenQualities = /* @__PURE__ */ new Set();
@@ -215,12 +216,16 @@ var getStream = async function({
       rawVariants.push({ label, url: href, quality: qual, rank });
     });
     rawVariants.sort((a, b) => b.rank - a.rank);
+    const resolveHeaders = {
+      ...defaultHeaders,
+      Cookie: pageCookies || void 0,
+      Referer: videoPageUrl
+    };
     for (const item of rawVariants) {
       try {
-        const direct = await resolveDirectUrl(item.url, axios, defaultHeaders);
+        const direct = await resolveDirectUrl(item.url, axios, resolveHeaders);
         if (direct && direct.startsWith("http") && direct !== item.url) {
           item.url = direct;
-          break;
         }
       } catch (e) {
       }
@@ -229,6 +234,9 @@ var getStream = async function({
       Referer: baseUrl + "/",
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     };
+    if (pageCookies) {
+      streamHeaders.Cookie = pageCookies;
+    }
     for (const v of rawVariants) {
       streams.push({
         server: v.label,

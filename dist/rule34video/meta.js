@@ -1,5 +1,5 @@
 // @vega-provider rule34video
-// @vega-version 2.3.5
+// @vega-version 2.3.6
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -382,7 +382,9 @@ var getMeta = async function({
         }
       });
       const tagTitle = $("h1").first().text().trim() || $("title").text().replace(/- Rule34Video/i, "").trim() || "Tag Playlist";
-      const firstImage2 = $(".item.thumb img").first().attr("src") || `${baseUrl}/apple-touch-icon.png`;
+      const rawFirst = $(".item.thumb img").first();
+      const rawFirstSrc = rawFirst.attr("data-rd-src") || rawFirst.attr("src") || "";
+      const firstImage2 = rawFirstSrc ? rawFirstSrc.includes("/contents/videos_screenshots/") ? rawFirstSrc.replace(/\/\d+x\d+\/\d+\.jpg$/i, "/preview.jpg") : rawFirstSrc : `${baseUrl}/apple-touch-icon.png`;
       return {
         title: tagTitle,
         synopsis: "",
@@ -401,11 +403,14 @@ var getMeta = async function({
     const title = $("h1").first().text().trim() || $("meta[property='og:title']").attr("content") || $("title").text().replace(/- Rule34Video/i, "").trim() || "Video";
     var thumbMatch = html.match(/"thumbnailUrl"\s*:\s*"([^"]+)"/i);
     var image = thumbMatch && thumbMatch[1] || "";
+    if (image && image.includes("/contents/videos_screenshots/")) {
+      image = image.replace(/\/\d+x\d+\/\d+\.jpg$/i, "/preview.jpg");
+    }
     if (!image) {
       var idMatch = url.match(/\/video\/(\d+)/);
       if (idMatch) {
         var vid = parseInt(idMatch[1], 10);
-        var bucket = Math.floor(vid / 1e4) * 1e4;
+        var bucket = Math.floor(vid / 1e3) * 1e3;
         image = baseUrl + "/contents/videos_screenshots/" + bucket + "/" + vid + "/preview.jpg";
       }
     }

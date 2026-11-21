@@ -57,6 +57,19 @@ function parseApiDuration(text: any): number {
   return s;
 }
 
+export function upgradePornhubImageUrl(url: string): string {
+  if (!url || typeof url !== "string") return "";
+  let cleanUrl = url.trim();
+  const origMatch = cleanUrl.match(
+    /(https?:\/\/[^\/]+)?(\/(?:c\d+\/)?videos\/\d+\/\d+\/\d+\/original\/[^\/?#]+\.(?:jpe?g|png|webp))/i
+  );
+  if (origMatch) {
+    return "https://ei.phncdn.com" + origMatch[2];
+  }
+  cleanUrl = cleanUrl.replace(/https?:\/\/[a-z0-9.-]*phncdn\.com/i, "https://ei.phncdn.com");
+  return cleanUrl;
+}
+
 function extractViewkey(link: string): string | null {
   const m = String(link || "").match(/viewkey=([a-zA-Z0-9]+)/i);
   return m ? m[1] : null;
@@ -70,7 +83,7 @@ async function fetchVideoById(
   for (const base of candidateBases) {
     for (let retry = 0; retry < 2; retry++) {
       try {
-        const apiUrl = `${base}/webmasters/video_by_id?id=${viewkey}&thumbsize=medium`;
+        const apiUrl = `${base}/webmasters/video_by_id?id=${viewkey}&thumbsize=large`;
         const res = await axios.get(apiUrl, {
           headers: {
             Accept: "application/json, text/plain, */*",
@@ -124,12 +137,20 @@ export const getMeta = async function ({
   let title = apiVideo ? String(apiVideo.title || "").trim() : "";
   let image = "";
   if (apiVideo) {
-    if (apiVideo.thumbs && Array.isArray(apiVideo.thumbs) && apiVideo.thumbs.length > 0) {
-      const fl = apiVideo.thumbs.find((t: any) => t && t.src && t.src.includes("pix-fl"));
-      if (fl && fl.src) image = fl.src;
+    if (apiVideo.thumb) {
+      image = upgradePornhubImageUrl(apiVideo.thumb);
+    }
+    if (!image && apiVideo.thumbs && Array.isArray(apiVideo.thumbs) && apiVideo.thumbs.length > 0) {
+      const origThumb = apiVideo.thumbs.find((t: any) => t && t.src && t.src.includes("/original/"));
+      if (origThumb && origThumb.src) {
+        image = upgradePornhubImageUrl(origThumb.src);
+      } else {
+        const fl = apiVideo.thumbs.find((t: any) => t && t.src && (t.src.includes("pix-fl") || t.src.includes("ei.phncdn")));
+        if (fl && fl.src) image = upgradePornhubImageUrl(fl.src);
+      }
     }
     if (!image) {
-      image = apiVideo.default_thumb || apiVideo.thumb || "";
+      image = upgradePornhubImageUrl(apiVideo.default_thumb || "");
     }
   }
 
@@ -204,7 +225,7 @@ export const getMeta = async function ({
           $('meta[property="og:image"]').attr("content") ||
           $('meta[name="twitter:image"]').attr("content");
         if (ogImg) {
-          image = ogImg;
+          image = upgradePornhubImageUrl(ogImg);
         }
 
         const pageSynopsis =

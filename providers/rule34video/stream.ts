@@ -138,6 +138,7 @@ export const getStream = async function ({
       maxRedirects: 5,
     });
     const html = res.data;
+    const pageCookies = (res.headers["set-cookie"] || []).map((c: string) => c.split(";")[0]).join("; ");
     const streams: Stream[] = [];
     const addedUrls = new Set<string>();
     const seenQualities = new Set<string>();
@@ -239,21 +240,29 @@ export const getStream = async function ({
     // first (default) stream. Once one quality resolves, the rest
     // would 403 anyway, so stop there — the unresolved qualities
     // stay in the list as fallback (still playable, just slower).
+    const resolveHeaders = {
+      ...defaultHeaders,
+      Cookie: pageCookies || undefined,
+      Referer: videoPageUrl,
+    };
+
     for (const item of rawVariants) {
       try {
-        const direct = await resolveDirectUrl(item.url, axios, defaultHeaders);
+        const direct = await resolveDirectUrl(item.url, axios, resolveHeaders);
         if (direct && direct.startsWith("http") && direct !== item.url) {
           item.url = direct;
-          break;
         }
       } catch (e) {}
     }
 
-    const streamHeaders = {
+    const streamHeaders: Record<string, string> = {
       Referer: baseUrl + "/",
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     };
+    if (pageCookies) {
+      streamHeaders.Cookie = pageCookies;
+    }
 
     for (const v of rawVariants) {
       streams.push({

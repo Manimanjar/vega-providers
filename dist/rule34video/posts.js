@@ -1,5 +1,5 @@
 // @vega-provider rule34video
-// @vega-version 2.3.5
+// @vega-version 2.3.6
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -23,7 +23,8 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var posts_exports = {};
 __export(posts_exports, {
   getPosts: () => getPosts,
-  getSearchPosts: () => getSearchPosts
+  getSearchPosts: () => getSearchPosts,
+  upgradeRule34ImageUrl: () => upgradeRule34ImageUrl
 });
 module.exports = __toCommonJS(posts_exports);
 
@@ -1006,6 +1007,13 @@ function formatDuration(totalSeconds) {
   var mm = h > 0 ? String(m).padStart(2, "0") : String(m);
   return (h > 0 ? h + ":" + mm : mm) + ":" + String(sec).padStart(2, "0");
 }
+function upgradeRule34ImageUrl(url) {
+  if (!url || typeof url !== "string") return "";
+  if (url.includes("/contents/videos_screenshots/")) {
+    return url.replace(/\/\d+x\d+\/\d+\.jpg$/i, "/preview.jpg");
+  }
+  return url;
+}
 async function getBase(kvStore, axios) {
   if (kvStore && typeof kvStore.get === "function") {
     try {
@@ -1166,7 +1174,8 @@ async function parseVideoGrid(options) {
       }
       seenVideoIds.add(videoId);
       var img = $el.find("img.thumb, img").first();
-      var image = img.attr("data-rd-jpg") || img.attr("data-src") || img.attr("src") || "";
+      var rawImg = img.attr("data-rd-src") || img.attr("src") || img.attr("data-rd-jpg") || "";
+      var image = upgradeRule34ImageUrl(rawImg);
       var duration = $el.find(".time").first().text().trim();
       var durationSec = 0;
       if (duration) {
@@ -1192,7 +1201,7 @@ async function parseVideoGrid(options) {
         var idm = String(rawHref).match(/\/video\/(\d+)/);
         if (idm) {
           var vid2 = parseInt(idm[1], 10);
-          var bucket2 = Math.floor(vid2 / 1e4) * 1e4;
+          var bucket2 = Math.floor(vid2 / 1e3) * 1e3;
           image = baseUrl + "/contents/videos_screenshots/" + bucket2 + "/" + vid2 + "/preview.jpg";
         }
       }

@@ -108,9 +108,13 @@ export const getMeta = async function ({
         $("title").text().replace(/- Rule34Video/i, "").trim() ||
         "Tag Playlist";
 
-      const firstImage =
-        $(".item.thumb img").first().attr("src") ||
-        `${baseUrl}/apple-touch-icon.png`;
+      const rawFirst = $(".item.thumb img").first();
+      const rawFirstSrc = rawFirst.attr("data-rd-src") || rawFirst.attr("src") || "";
+      const firstImage = rawFirstSrc
+        ? (rawFirstSrc.includes("/contents/videos_screenshots/")
+            ? rawFirstSrc.replace(/\/\d+x\d+\/\d+\.jpg$/i, "/preview.jpg")
+            : rawFirstSrc)
+        : `${baseUrl}/apple-touch-icon.png`;
 
       return {
         title: tagTitle,
@@ -146,11 +150,14 @@ export const getMeta = async function ({
     // site uses: bucket = floor(id / 10000) * 10000).
     var thumbMatch = html.match(/"thumbnailUrl"\s*:\s*"([^"]+)"/i);
     var image = (thumbMatch && thumbMatch[1]) || "";
+    if (image && image.includes("/contents/videos_screenshots/")) {
+      image = image.replace(/\/\d+x\d+\/\d+\.jpg$/i, "/preview.jpg");
+    }
     if (!image) {
       var idMatch = url.match(/\/video\/(\d+)/);
       if (idMatch) {
         var vid = parseInt(idMatch[1], 10);
-        var bucket = Math.floor(vid / 10000) * 10000;
+        var bucket = Math.floor(vid / 1000) * 1000;
         image = baseUrl + "/contents/videos_screenshots/" + bucket + "/" + vid + "/preview.jpg";
       }
     }

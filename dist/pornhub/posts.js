@@ -1,5 +1,5 @@
 // @vega-provider pornhub
-// @vega-version 2.3.7
+// @vega-version 2.3.8
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -23,7 +23,8 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var posts_exports = {};
 __export(posts_exports, {
   getPosts: () => getPosts,
-  getSearchPosts: () => getSearchPosts
+  getSearchPosts: () => getSearchPosts,
+  upgradePornhubImageUrl: () => upgradePornhubImageUrl
 });
 module.exports = __toCommonJS(posts_exports);
 
@@ -1212,6 +1213,18 @@ function formatDuration(totalSeconds) {
   var mm = h > 0 ? String(m).padStart(2, "0") : String(m);
   return (h > 0 ? h + ":" + mm : mm) + ":" + String(sec).padStart(2, "0");
 }
+function upgradePornhubImageUrl(url) {
+  if (!url || typeof url !== "string") return "";
+  let cleanUrl = url.trim();
+  const origMatch = cleanUrl.match(
+    /(https?:\/\/[^\/]+)?(\/(?:c\d+\/)?videos\/\d+\/\d+\/\d+\/original\/[^\/?#]+\.(?:jpe?g|png|webp))/i
+  );
+  if (origMatch) {
+    return "https://ei.phncdn.com" + origMatch[2];
+  }
+  cleanUrl = cleanUrl.replace(/https?:\/\/[a-z0-9.-]*phncdn\.com/i, "https://ei.phncdn.com");
+  return cleanUrl;
+}
 function parseApiDuration(text) {
   var parts = String(text || "").split(":").map(function(p) {
     return parseInt(p, 10) || 0;
@@ -1297,7 +1310,7 @@ async function searchApi(query, page, opts) {
   });
   for (var bi = 0; bi < candidateBases.length; bi++) {
     var curBase = candidateBases[bi];
-    var apiUrl = curBase + "/webmasters/search?search=" + encodeURIComponent(query) + "&page=" + Math.max(1, page || 1) + "&thumbsize=medium";
+    var apiUrl = curBase + "/webmasters/search?search=" + encodeURIComponent(query) + "&page=" + Math.max(1, page || 1) + "&thumbsize=large";
     for (var retry = 0; retry < 2; retry++) {
       try {
         var res = await axios.get(apiUrl, {
@@ -1345,14 +1358,30 @@ async function searchApi(query, page, opts) {
           var title = String(v.title || "").trim();
           if (!title) continue;
           var image = "";
-          if (v.thumbs && Array.isArray(v.thumbs) && v.thumbs.length > 0) {
-            var fl = v.thumbs.find(function(t) {
-              return t && t.src && t.src.includes("pix-fl");
+          var preferredThumb = v.thumb || v.default_thumb || "";
+          var upgraded = upgradePornhubImageUrl(preferredThumb);
+          if (upgraded && (upgraded.includes("ei.phncdn.com") || upgraded.includes("pix-fl.phncdn.com"))) {
+            image = upgraded;
+          }
+          if (!image && v.thumbs && Array.isArray(v.thumbs) && v.thumbs.length > 0) {
+            var orig = v.thumbs.find(function(t) {
+              return t && t.src && t.src.includes("/original/");
             });
-            if (fl && fl.src) image = fl.src;
+            if (orig && orig.src) {
+              image = upgradePornhubImageUrl(orig.src);
+            } else {
+              for (var ti = 0; ti < v.thumbs.length; ti++) {
+                var tSrc = v.thumbs[ti] && v.thumbs[ti].src ? v.thumbs[ti].src : "";
+                var tUp = upgradePornhubImageUrl(tSrc);
+                if (tUp && (tUp.includes("ei.phncdn.com") || tUp.includes("pix-fl.phncdn.com"))) {
+                  image = tUp;
+                  break;
+                }
+              }
+            }
           }
           if (!image) {
-            image = v.default_thumb || v.thumb || "";
+            image = upgraded || upgradePornhubImageUrl(v.default_thumb || v.thumbs && v.thumbs[0]?.src || "");
           }
           var durationSec = parseApiDuration(v.duration);
           var durationText = formatDuration(durationSec) || v.duration || void 0;

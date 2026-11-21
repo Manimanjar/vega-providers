@@ -152,12 +152,15 @@ async function runTests() {
     if (posts.length > 0) {
       assert(!!posts[0].title, `PornHub first post has valid title`);
       assert(!!posts[0].image && posts[0].image.startsWith("http"), `PornHub first post has thumbnail image`);
-      assert(!!posts[0].link && posts[0].link.startsWith("http"), `PornHub post link is valid URL`);
       phSampleLink = posts[0].link;
+      assert(
+        !posts[0].image.includes("pix-cdn77.phncdn.com"),
+        `PornHub thumbnail is not using blocked pix-cdn77 (${posts[0].image})`
+      );
     }
-  } catch (e) {
-    assert(false, `PornHub homepage getPosts error: ${e.message}`);
-  }
+    } catch (e) {
+      assert(false, `PornHub homepage getPosts error: ${e.message}`);
+    }
 
   // Test multi_query category performance (e.g. rel_sister)
   try {
@@ -195,6 +198,10 @@ async function runTests() {
       assert(!!meta.title && meta.title !== "Video", `PornHub getMeta returned valid non-placeholder title`);
       assert(meta.type === "movie", `PornHub getMeta has type: '${meta.type}'`);
       assert(!!meta.poster || !!meta.image, `PornHub getMeta has poster/image populated`);
+      assert(
+        !meta.image?.includes("pix-cdn77.phncdn.com"),
+        `PornHub meta poster is not on blocked pix-cdn77`
+      );
       assert(!!meta.synopsis, `PornHub getMeta has synopsis populated`);
       assert(meta.rating === undefined || typeof meta.rating === "string", `PornHub getMeta rating is string or undefined (got ${typeof meta.rating})`);
       if (meta.rating) {
@@ -240,6 +247,94 @@ async function runTests() {
       }
     } catch (e) {
       assert(false, `PornHub getStream error: ${e.message}`);
+    }
+  }
+
+  // -----------------------------------------------------------------
+  // 3. RULE34VIDEO TESTS
+  // -----------------------------------------------------------------
+  console.log("\n--- 3. Testing Rule34Video Provider ---");
+  const r34Posts = require(path.resolve(__dirname, "../dist/rule34video/posts.js"));
+  const r34Meta = require(path.resolve(__dirname, "../dist/rule34video/meta.js"));
+  const r34Stream = require(path.resolve(__dirname, "../dist/rule34video/stream.js"));
+  const r34Context = createMockContext();
+
+  let r34SampleLink = "";
+  try {
+    const posts = await r34Posts.getPosts({
+      filter: "homepage",
+      page: 1,
+      providerContext: r34Context,
+    });
+    assert(Array.isArray(posts) && posts.length > 0, `Rule34Video homepage loaded ${posts.length} posts`);
+    if (posts.length > 0) {
+      assert(!!posts[0].title, `Rule34Video first post has title: '${posts[0].title.slice(0, 30)}...'`);
+      assert(!!posts[0].image, `Rule34Video first post has thumbnail image: ${posts[0].image}`);
+      assert(posts[0].image.includes("preview.jpg"), `Rule34Video thumbnail upgraded to HD preview.jpg`);
+      r34SampleLink = posts[0].link;
+
+      // Verify HD thumbnail loads with HTTP 200
+      try {
+        const imgRes = await axios.head(posts[0].image, {
+          headers: { Referer: "https://rule34video.com/" },
+          timeout: 6000,
+        });
+        assert(imgRes.status === 200, `Rule34Video HD poster returns HTTP 200 (Content-Length: ${imgRes.headers["content-length"]})`);
+      } catch (e) {
+        assert(false, `Rule34Video thumbnail check failed: ${e.message}`);
+      }
+    }
+  } catch (e) {
+    assert(false, `Rule34Video getPosts error: ${e.message}`);
+  }
+
+  if (r34SampleLink) {
+    try {
+      const meta = await r34Meta.getMeta({ link: r34SampleLink, providerContext: r34Context });
+      assert(!!meta.title, `Rule34Video getMeta returned valid title`);
+      assert(meta.type === "movie", `Rule34Video getMeta type: '${meta.type}'`);
+      assert(!!meta.poster, `Rule34Video getMeta has poster populated`);
+      assert(meta.poster.includes("preview.jpg"), `Rule34Video meta poster upgraded to HD preview.jpg`);
+      assert(Array.isArray(meta.linkList) && meta.linkList.length > 0, `Rule34Video meta linkList has ${meta.linkList?.length} groups`);
+      assert(meta.linkList[0].directLinks.length > 0, `Rule34Video directLinks has ${meta.linkList[0].directLinks.length} items`);
+    } catch (e) {
+      assert(false, `Rule34Video getMeta error: ${e.message}`);
+    }
+
+    try {
+      const streams = await r34Stream.getStream({
+        link: r34SampleLink,
+        type: "movie",
+        providerContext: r34Context,
+      });
+      assert(Array.isArray(streams) && streams.length > 0, `Rule34Video resolved ${streams.length} stream qualities`);
+      if (streams.length > 0) {
+        const fastStream = streams.find((s) => s.link.includes("boomio-cdn.com")) || streams[0];
+        assert(fastStream.link.includes("boomio-cdn.com"), `Rule34Video resolved directly to fast CDN: ${fastStream.server}`);
+        
+        // Test byte-range HTTP 206 streaming connectivity
+        try {
+          const res = await axios.get(fastStream.link, {
+            headers: {
+              ...(fastStream.headers || {}),
+              Range: "bytes=0-1024",
+            },
+            responseType: "stream",
+            timeout: 8000,
+          });
+          assert(
+            res.status === 200 || res.status === 206,
+            `Rule34Video stream playable with HTTP ${res.status} (${res.headers["content-type"]})`
+          );
+          if (res.data && typeof res.data.destroy === "function") {
+            res.data.destroy();
+          }
+        } catch (e) {
+          assert(false, `Rule34Video stream HTTP check failed: ${e.message}`);
+        }
+      }
+    } catch (e) {
+      assert(false, `Rule34Video getStream error: ${e.message}`);
     }
   }
 

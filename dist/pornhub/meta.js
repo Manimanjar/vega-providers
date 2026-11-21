@@ -1,5 +1,5 @@
 // @vega-provider pornhub
-// @vega-version 2.3.7
+// @vega-version 2.3.8
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -22,7 +22,8 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // providers/pornhub/meta.ts
 var meta_exports = {};
 __export(meta_exports, {
-  getMeta: () => getMeta
+  getMeta: () => getMeta,
+  upgradePornhubImageUrl: () => upgradePornhubImageUrl
 });
 module.exports = __toCommonJS(meta_exports);
 var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
@@ -79,6 +80,18 @@ function parseApiDuration(text) {
   for (var i = 0; i < parts.length; i++) s = s * 60 + parts[i];
   return s;
 }
+function upgradePornhubImageUrl(url) {
+  if (!url || typeof url !== "string") return "";
+  let cleanUrl = url.trim();
+  const origMatch = cleanUrl.match(
+    /(https?:\/\/[^\/]+)?(\/(?:c\d+\/)?videos\/\d+\/\d+\/\d+\/original\/[^\/?#]+\.(?:jpe?g|png|webp))/i
+  );
+  if (origMatch) {
+    return "https://ei.phncdn.com" + origMatch[2];
+  }
+  cleanUrl = cleanUrl.replace(/https?:\/\/[a-z0-9.-]*phncdn\.com/i, "https://ei.phncdn.com");
+  return cleanUrl;
+}
 function extractViewkey(link) {
   const m = String(link || "").match(/viewkey=([a-zA-Z0-9]+)/i);
   return m ? m[1] : null;
@@ -87,7 +100,7 @@ async function fetchVideoById(viewkey, axios, candidateBases) {
   for (const base of candidateBases) {
     for (let retry = 0; retry < 2; retry++) {
       try {
-        const apiUrl = `${base}/webmasters/video_by_id?id=${viewkey}&thumbsize=medium`;
+        const apiUrl = `${base}/webmasters/video_by_id?id=${viewkey}&thumbsize=large`;
         const res = await axios.get(apiUrl, {
           headers: {
             Accept: "application/json, text/plain, */*",
@@ -130,12 +143,20 @@ var getMeta = async function({
   let title = apiVideo ? String(apiVideo.title || "").trim() : "";
   let image = "";
   if (apiVideo) {
-    if (apiVideo.thumbs && Array.isArray(apiVideo.thumbs) && apiVideo.thumbs.length > 0) {
-      const fl = apiVideo.thumbs.find((t) => t && t.src && t.src.includes("pix-fl"));
-      if (fl && fl.src) image = fl.src;
+    if (apiVideo.thumb) {
+      image = upgradePornhubImageUrl(apiVideo.thumb);
+    }
+    if (!image && apiVideo.thumbs && Array.isArray(apiVideo.thumbs) && apiVideo.thumbs.length > 0) {
+      const origThumb = apiVideo.thumbs.find((t) => t && t.src && t.src.includes("/original/"));
+      if (origThumb && origThumb.src) {
+        image = upgradePornhubImageUrl(origThumb.src);
+      } else {
+        const fl = apiVideo.thumbs.find((t) => t && t.src && (t.src.includes("pix-fl") || t.src.includes("ei.phncdn")));
+        if (fl && fl.src) image = upgradePornhubImageUrl(fl.src);
+      }
     }
     if (!image) {
-      image = apiVideo.default_thumb || apiVideo.thumb || "";
+      image = upgradePornhubImageUrl(apiVideo.default_thumb || "");
     }
   }
   let synopsis = title ? `Watch ${title} on PornHub.` : "";
@@ -195,7 +216,7 @@ var getMeta = async function({
         }
         const ogImg = $('meta[property="og:image"]').attr("content") || $('meta[name="twitter:image"]').attr("content");
         if (ogImg) {
-          image = ogImg;
+          image = upgradePornhubImageUrl(ogImg);
         }
         const pageSynopsis = $('meta[name="description"]').attr("content") || $('meta[property="og:description"]').attr("content");
         if (pageSynopsis) {
