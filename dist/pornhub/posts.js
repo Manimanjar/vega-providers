@@ -1,5 +1,5 @@
 // @vega-provider pornhub
-// @vega-version 2.3.8
+// @vega-version 2.3.9
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -1217,12 +1217,17 @@ function upgradePornhubImageUrl(url) {
   if (!url || typeof url !== "string") return "";
   let cleanUrl = url.trim();
   const origMatch = cleanUrl.match(
-    /(https?:\/\/[^\/]+)?(\/(?:c\d+\/)?videos\/\d+\/\d+\/\d+\/original\/[^\/?#]+\.(?:jpe?g|png|webp))/i
+    /(?:https?:\/\/[^\/]+)?(\/(?:c\d+\/)?videos\/\d+\/\d+\/\d+\/original\/[^\/?#]+\.(?:jpe?g|png|webp))/i
   );
-  if (origMatch) {
-    return "https://ei.phncdn.com" + origMatch[2];
+  if (origMatch && origMatch[1]) {
+    return "https://ei.phncdn.com" + origMatch[1];
   }
-  cleanUrl = cleanUrl.replace(/https?:\/\/[a-z0-9.-]*phncdn\.com/i, "https://ei.phncdn.com");
+  if (cleanUrl.includes("pix-fl.phncdn.com") || cleanUrl.includes("pix-egi.phncdn.com") || cleanUrl.includes("ei.phncdn.com")) {
+    return cleanUrl;
+  }
+  if (cleanUrl.includes("pix-cdn77.phncdn.com")) {
+    return cleanUrl.replace("pix-cdn77.phncdn.com", "pix-fl.phncdn.com");
+  }
   return cleanUrl;
 }
 function parseApiDuration(text) {
@@ -1310,7 +1315,7 @@ async function searchApi(query, page, opts) {
   });
   for (var bi = 0; bi < candidateBases.length; bi++) {
     var curBase = candidateBases[bi];
-    var apiUrl = curBase + "/webmasters/search?search=" + encodeURIComponent(query) + "&page=" + Math.max(1, page || 1) + "&thumbsize=large";
+    var apiUrl = curBase + "/webmasters/search?search=" + encodeURIComponent(query) + "&page=" + Math.max(1, page || 1) + "&thumbsize=large_hd";
     for (var retry = 0; retry < 2; retry++) {
       try {
         var res = await axios.get(apiUrl, {
@@ -1358,30 +1363,36 @@ async function searchApi(query, page, opts) {
           var title = String(v.title || "").trim();
           if (!title) continue;
           var image = "";
-          var preferredThumb = v.thumb || v.default_thumb || "";
-          var upgraded = upgradePornhubImageUrl(preferredThumb);
-          if (upgraded && (upgraded.includes("ei.phncdn.com") || upgraded.includes("pix-fl.phncdn.com"))) {
-            image = upgraded;
+          var candidates = [v.thumb, v.default_thumb];
+          if (v.thumbs && Array.isArray(v.thumbs)) {
+            for (var ti = 0; ti < v.thumbs.length; ti++) {
+              if (v.thumbs[ti] && v.thumbs[ti].src) candidates.push(v.thumbs[ti].src);
+            }
           }
-          if (!image && v.thumbs && Array.isArray(v.thumbs) && v.thumbs.length > 0) {
-            var orig = v.thumbs.find(function(t) {
-              return t && t.src && t.src.includes("/original/");
-            });
-            if (orig && orig.src) {
-              image = upgradePornhubImageUrl(orig.src);
-            } else {
-              for (var ti = 0; ti < v.thumbs.length; ti++) {
-                var tSrc = v.thumbs[ti] && v.thumbs[ti].src ? v.thumbs[ti].src : "";
-                var tUp = upgradePornhubImageUrl(tSrc);
-                if (tUp && (tUp.includes("ei.phncdn.com") || tUp.includes("pix-fl.phncdn.com"))) {
-                  image = tUp;
+          for (var ci = 0; ci < candidates.length; ci++) {
+            var cand = candidates[ci];
+            if (cand && typeof cand === "string" && cand.includes("/original/")) {
+              var up = upgradePornhubImageUrl(cand);
+              if (up && up.includes("ei.phncdn.com")) {
+                image = up;
+                break;
+              }
+            }
+          }
+          if (!image) {
+            for (var ci2 = 0; ci2 < candidates.length; ci2++) {
+              var cand2 = candidates[ci2];
+              if (cand2 && typeof cand2 === "string") {
+                var up2 = upgradePornhubImageUrl(cand2);
+                if (up2 && (up2.includes("pix-fl.phncdn.com") || up2.includes("pix-egi.phncdn.com") || up2.includes("ei.phncdn.com"))) {
+                  image = up2;
                   break;
                 }
               }
             }
           }
           if (!image) {
-            image = upgraded || upgradePornhubImageUrl(v.default_thumb || v.thumbs && v.thumbs[0]?.src || "");
+            image = upgradePornhubImageUrl(v.default_thumb || v.thumb || "");
           }
           var durationSec = parseApiDuration(v.duration);
           var durationText = formatDuration(durationSec) || v.duration || void 0;

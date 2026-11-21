@@ -43,13 +43,31 @@ function formatDuration(totalSeconds) {
 export function upgradePornhubImageUrl(url: string): string {
   if (!url || typeof url !== "string") return "";
   let cleanUrl = url.trim();
+
+  // 1. If it contains an original master poster image (e.g. /original/<uuid>.jpg or /original/<uuid>.png),
+  // strip any /plain/... resizing parameters or tokens and serve the master image directly from ei.phncdn.com.
   const origMatch = cleanUrl.match(
-    /(https?:\/\/[^\/]+)?(\/(?:c\d+\/)?videos\/\d+\/\d+\/\d+\/original\/[^\/?#]+\.(?:jpe?g|png|webp))/i
+    /(?:https?:\/\/[^\/]+)?(\/(?:c\d+\/)?videos\/\d+\/\d+\/\d+\/original\/[^\/?#]+\.(?:jpe?g|png|webp))/i
   );
-  if (origMatch) {
-    return "https://ei.phncdn.com" + origMatch[2];
+  if (origMatch && origMatch[1]) {
+    return "https://ei.phncdn.com" + origMatch[1];
   }
-  cleanUrl = cleanUrl.replace(/https?:\/\/[a-z0-9.-]*phncdn\.com/i, "https://ei.phncdn.com");
+
+  // 2. If it's already on unblocked Fastly (pix-fl) or Edgecast (pix-egi, ei), preserve the valid signed URL as-is!
+  // NEVER rewrite signed vts frames to ei.phncdn.com (doing so causes HTTP 410 Gone).
+  if (
+    cleanUrl.includes("pix-fl.phncdn.com") ||
+    cleanUrl.includes("pix-egi.phncdn.com") ||
+    cleanUrl.includes("ei.phncdn.com")
+  ) {
+    return cleanUrl;
+  }
+
+  // 3. If it's on blocked pix-cdn77, replace with pix-fl so it routes through Fastly rather than timing out.
+  if (cleanUrl.includes("pix-cdn77.phncdn.com")) {
+    return cleanUrl.replace("pix-cdn77.phncdn.com", "pix-fl.phncdn.com");
+  }
+
   return cleanUrl;
 }
 
@@ -159,7 +177,7 @@ async function searchApi(query, page, opts) {
       encodeURIComponent(query) +
       "&page=" +
       Math.max(1, page || 1) +
-      "&thumbsize=large";
+      "&thumbsize=large_hd";
 
     for (var retry = 0; retry < 2; retry++) {
       try {
@@ -212,32 +230,49 @@ async function searchApi(query, page, opts) {
           if (!title) continue;
 
           var image = "";
-          // Prioritize v.thumb (original HD poster) over v.default_thumb (small frame scrub)
-          var preferredThumb = v.thumb || v.default_thumb || "";
-          var upgraded = upgradePornhubImageUrl(preferredThumb);
-          if (upgraded && (upgraded.includes("ei.phncdn.com") || upgraded.includes("pix-fl.phncdn.com"))) {
-            image = upgraded;
+
+          // Collect all candidate thumbnail URLs from the video payload
+          var candidates = [v.thumb, v.default_thumb];
+          if (v.thumbs && Array.isArray(v.thumbs)) {
+            for (var ti = 0; ti < v.thumbs.length; ti++) {
+              if (v.thumbs[ti] && v.thumbs[ti].src) candidates.push(v.thumbs[ti].src);
+            }
           }
 
-          if (!image && v.thumbs && Array.isArray(v.thumbs) && v.thumbs.length > 0) {
-            // First look for /original/ in thumbs
-            var orig = v.thumbs.find(function(t) { return t && t.src && t.src.includes("/original/"); });
-            if (orig && orig.src) {
-              image = upgradePornhubImageUrl(orig.src);
-            } else {
-              for (var ti = 0; ti < v.thumbs.length; ti++) {
-                var tSrc = v.thumbs[ti] && v.thumbs[ti].src ? v.thumbs[ti].src : "";
-                var tUp = upgradePornhubImageUrl(tSrc);
-                if (tUp && (tUp.includes("ei.phncdn.com") || tUp.includes("pix-fl.phncdn.com"))) {
-                  image = tUp;
+          // 1. First priority: look for a master poster (/original/<uuid>.jpg)
+          for (var ci = 0; ci < candidates.length; ci++) {
+            var cand = candidates[ci];
+            if (cand && typeof cand === "string" && cand.includes("/original/")) {
+              var up = upgradePornhubImageUrl(cand);
+              if (up && up.includes("ei.phncdn.com")) {
+                image = up;
+                break;
+              }
+            }
+          }
+
+          // 2. Second priority: high-definition frame from unblocked pix-fl, pix-egi, or ei
+          if (!image) {
+            for (var ci2 = 0; ci2 < candidates.length; ci2++) {
+              var cand2 = candidates[ci2];
+              if (cand2 && typeof cand2 === "string") {
+                var up2 = upgradePornhubImageUrl(cand2);
+                if (
+                  up2 &&
+                  (up2.includes("pix-fl.phncdn.com") ||
+                    up2.includes("pix-egi.phncdn.com") ||
+                    up2.includes("ei.phncdn.com"))
+                ) {
+                  image = up2;
                   break;
                 }
               }
             }
           }
 
+          // 3. Fallback
           if (!image) {
-            image = upgraded || upgradePornhubImageUrl(v.default_thumb || (v.thumbs && v.thumbs[0]?.src) || "");
+            image = upgradePornhubImageUrl(v.default_thumb || v.thumb || "");
           }
 
           var durationSec = parseApiDuration(v.duration);
