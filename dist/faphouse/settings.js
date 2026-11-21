@@ -43,6 +43,14 @@ var getSettingsSchema = async function({
       label: "3D content only",
       description: "When on, searches and catalogs focus strictly on 3D, CGI, and animation content.",
       defaultValue: false
+    },
+    {
+      key: "sessionCookie",
+      type: "text",
+      label: "Account Session Cookie (Optional)",
+      description: "FapHouse is a paid platform that only provides 30-60s trailers to guests. Paste your member cookie (e.g. PHPSESSID=...) to stream full videos.",
+      placeholder: "PHPSESSID=your_session_cookie",
+      defaultValue: ""
     }
   ];
 };
