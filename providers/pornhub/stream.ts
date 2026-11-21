@@ -132,13 +132,13 @@ export const getStream = async function ({
   }
 
   const candidateBases = [
-    "https://www.pornhub.com",
-    baseUrl,
-    "https://rt.pornhub.com",
     "https://de.pornhub.com",
     "https://www.pornhub.org",
+    baseUrl,
+    "https://www.pornhub.com",
+    "https://rt.pornhub.com",
     "https://www.pornhub.net",
-  ].filter((b, idx, arr) => arr.indexOf(b) === idx);
+  ].filter((b, idx, arr) => b && arr.indexOf(b) === idx);
 
   for (const curBase of candidateBases) {
     const targetUrl = `${curBase}${pathPart}`;

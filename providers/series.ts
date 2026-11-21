@@ -156,6 +156,12 @@ export function parsePartTitle(title) {
   return null;
 }
 
+export function isExplicitSeriesTitle(title: string): boolean {
+  var clean = stripTrailingDuration(title);
+  if (!clean) return false;
+  return /[-–—:]?\s*(?:part|pt\.?|volume|vol\.?|v\.?|episode|ep\.?|chapter|ch\.?|season|s\.?|book|bk\.?|#)\s*\d+/i.test(clean);
+}
+
 // Natural compare: "Part 2" before "Part 10", "8.5" before "11".
 // Splits into digit / non-digit chunks and compares chunk by chunk.
 export function naturalCompare(a, b) {

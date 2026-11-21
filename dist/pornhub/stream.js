@@ -1,5 +1,5 @@
 // @vega-provider pornhub
-// @vega-version 2.4.0
+// @vega-version 2.4.1
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -141,13 +141,13 @@ var getStream = async function({
     pathPart = "/" + pathPart;
   }
   const candidateBases = [
-    "https://www.pornhub.com",
-    baseUrl,
-    "https://rt.pornhub.com",
     "https://de.pornhub.com",
     "https://www.pornhub.org",
+    baseUrl,
+    "https://www.pornhub.com",
+    "https://rt.pornhub.com",
     "https://www.pornhub.net"
-  ].filter((b, idx, arr) => arr.indexOf(b) === idx);
+  ].filter((b, idx, arr) => b && arr.indexOf(b) === idx);
   for (const curBase of candidateBases) {
     const targetUrl = `${curBase}${pathPart}`;
     for (let retry = 0; retry < 2; retry++) {

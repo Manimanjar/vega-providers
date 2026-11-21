@@ -72,6 +72,11 @@ export function upgradePornhubImageUrl(url: string): string {
   return cleanUrl;
 }
 
+function extractViewkey(link: string): string | null {
+  const m = String(link || "").match(/viewkey=([a-zA-Z0-9]+)/i);
+  return m ? m[1] : null;
+}
+
 // "17:16" / "1:02:33" -> seconds. The Webmasters API returns duration
 // as an H:MM:SS string.
 function parseApiDuration(text) {
@@ -160,14 +165,14 @@ async function searchApi(query, page, opts) {
   var baseUrl = (opts && opts.baseUrl) || DEFAULT_BASE_URL;
 
   var candidateBases = [
+    "https://de.pornhub.com",
+    "https://www.pornhub.org",
     baseUrl,
     "https://www.pornhub.com",
     "https://rt.pornhub.com",
-    "https://de.pornhub.com",
-    "https://www.pornhub.org",
     "https://www.pornhub.net",
   ].filter(function (b, idx, arr) {
-    return arr.indexOf(b) === idx;
+    return b && arr.indexOf(b) === idx;
   });
 
   for (var bi = 0; bi < candidateBases.length; bi++) {
@@ -290,6 +295,65 @@ async function searchApi(query, page, opts) {
         posts.sort(function (a, b) {
           return compareTitle(a.title || "", b.title || "");
         });
+
+        // Parallel resolution of any posts whose thumbnails are on blocked pix-cdn77
+        var cdn77NeedsFix = [];
+        for (var pi = 0; pi < posts.length; pi++) {
+          var p = posts[pi];
+          if (p.image && p.image.includes("pix-cdn77.phncdn.com") && !p.image.includes("ei.phncdn.com")) {
+            var vk = extractViewkey(p.link);
+            if (vk) {
+              cdn77NeedsFix.push({ post: p, viewkey: vk });
+            }
+          }
+        }
+        if (cdn77NeedsFix.length > 0) {
+          await Promise.all(
+            cdn77NeedsFix.slice(0, 10).map(async function (item) {
+              try {
+                var fixUrl =
+                  "https://de.pornhub.com/webmasters/video_by_id?id=" +
+                  item.viewkey +
+                  "&thumbsize=large_hd";
+                var fixRes = await axios.get(fixUrl, {
+                  headers: {
+                    Accept: "application/json, text/plain, */*",
+                    "User-Agent":
+                      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+                    Referer: "https://de.pornhub.com/",
+                    Cookie: "platform=pc; bs=0",
+                  },
+                  timeout: 3000,
+                });
+                var vData = fixRes.data && fixRes.data.video;
+                if (vData) {
+                  var vCandidates = [vData.default_thumb, vData.thumb];
+                  if (vData.thumbs && Array.isArray(vData.thumbs)) {
+                    for (var vi = 0; vi < vData.thumbs.length; vi++) {
+                      if (vData.thumbs[vi] && vData.thumbs[vi].src) vCandidates.push(vData.thumbs[vi].src);
+                    }
+                  }
+                  for (var vci = 0; vci < vCandidates.length; vci++) {
+                    var vCand = vCandidates[vci];
+                    if (vCand && typeof vCand === "string") {
+                      var vUp = upgradePornhubImageUrl(vCand);
+                      if (
+                        vUp &&
+                        (vUp.includes("ei.phncdn.com") ||
+                          vUp.includes("pix-fl.phncdn.com") ||
+                          vUp.includes("pix-egi.phncdn.com"))
+                      ) {
+                        item.post.image = vUp;
+                        break;
+                      }
+                    }
+                  }
+                }
+              } catch (e) {}
+            })
+          );
+        }
+
         return posts;
       } catch (err) {
         if (retry === 0) {
