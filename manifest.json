@@ -34,5 +34,14 @@
         "type": "global",
         "disabled": false,
         "hasSettings": true
+    },
+    {
+        "display_name": "FapHouse",
+        "value": "faphouse",
+        "version": "1.0.0",
+        "icon": "https://assets-nss.fhcdnmedia.online/9d3f29d8666549ad223adec08efdc848cffcf297/fap-site/default/images/favicons/favicon-96x96.png",
+        "type": "global",
+        "disabled": false,
+        "hasSettings": true
     }
 ]

@@ -343,6 +343,90 @@ async function runTests() {
     }
   }
 
+  // -----------------------------------------------------------------
+  // 5. FAPHOUSE TESTS
+  // -----------------------------------------------------------------
+  console.log("\n--- 5. Testing FapHouse Provider ---");
+  const fhPosts = require(path.resolve(__dirname, "../dist/faphouse/posts.js"));
+  const fhMeta = require(path.resolve(__dirname, "../dist/faphouse/meta.js"));
+  const fhStream = require(path.resolve(__dirname, "../dist/faphouse/stream.js"));
+  const fhCatalog = require(path.resolve(__dirname, "../dist/faphouse/catalog.js"));
+  const fhSettings = require(path.resolve(__dirname, "../dist/faphouse/settings.js"));
+  const fhContext = createMockContext();
+
+  assert(Array.isArray(fhCatalog.catalog) && fhCatalog.catalog.length >= 10, `FapHouse catalog loaded (${fhCatalog.catalog?.length} categories)`);
+  assert(Array.isArray(fhCatalog.genres) && fhCatalog.genres.length >= 5, `FapHouse genres loaded (${fhCatalog.genres?.length} genres)`);
+
+  const fhSchema = await fhSettings.getSettingsSchema({ providerContext: fhContext });
+  assert(fhSchema.some((s) => s.key === "baseUrlOverride"), "FapHouse settings has baseUrlOverride field");
+  assert(fhSchema.some((s) => s.key === "only3D"), "FapHouse settings has only3D field");
+
+  let fhSampleLink = "";
+  try {
+    const posts = await fhPosts.getPosts({ page: 1, providerContext: fhContext });
+    assert(Array.isArray(posts) && posts.length > 0, `FapHouse getPosts returned ${posts.length} items`);
+    if (posts.length > 0) {
+      assert(!!posts[0].title, `First post has title: ${posts[0].title}`);
+      assert(!!posts[0].link && posts[0].link.startsWith("http"), `First post has valid link: ${posts[0].link}`);
+      assert(!!posts[0].image && posts[0].image.startsWith("http"), `First post has valid image: ${posts[0].image}`);
+      fhSampleLink = posts[0].link;
+    }
+  } catch (e) {
+    assert(false, `FapHouse getPosts error: ${e.message}`);
+  }
+
+  try {
+    const searchPosts = await fhPosts.getSearchPosts({ searchQuery: "step", page: 1, providerContext: fhContext });
+    assert(Array.isArray(searchPosts) && searchPosts.length > 0, `FapHouse getSearchPosts returned ${searchPosts.length} items`);
+  } catch (e) {
+    assert(false, `FapHouse getSearchPosts error: ${e.message}`);
+  }
+
+  if (fhSampleLink) {
+    try {
+      const meta = await fhMeta.getMeta({ link: fhSampleLink, providerContext: fhContext });
+      assert(!!meta.title, `FapHouse getMeta title: '${meta.title}'`);
+      assert(typeof meta.imdbId === "string", `FapHouse getMeta imdbId is string: '${meta.imdbId}'`);
+      assert(typeof meta.rating === "string" && meta.rating.includes("/"), `FapHouse getMeta rating formatted: '${meta.rating}'`);
+      assert(meta.type === "movie", `FapHouse getMeta type: '${meta.type}'`);
+      assert(!!meta.poster && meta.poster.startsWith("http"), `FapHouse getMeta poster: ${meta.poster}`);
+      assert(Array.isArray(meta.linkList) && meta.linkList.length > 0, `FapHouse meta linkList has ${meta.linkList?.length} groups`);
+      assert(meta.linkList[0].directLinks.length > 0, `FapHouse directLinks has ${meta.linkList[0].directLinks.length} items`);
+    } catch (e) {
+      assert(false, `FapHouse getMeta error: ${e.message}`);
+    }
+
+    try {
+      const streams = await fhStream.getStream({
+        link: fhSampleLink,
+        type: "movie",
+        providerContext: fhContext,
+      });
+      assert(Array.isArray(streams) && streams.length > 0, `FapHouse resolved ${streams.length} stream qualities`);
+      if (streams.length > 0) {
+        const topStream = streams[0];
+        assert(topStream.type === "mp4", `FapHouse stream type is mp4: ${topStream.type}`);
+        assert(topStream.link.startsWith("http"), `FapHouse stream link is valid: ${topStream.link}`);
+
+        // Test stream connectivity
+        try {
+          const res = await axios.head(topStream.link, {
+            headers: topStream.headers || {},
+            timeout: 8000,
+          });
+          assert(
+            res.status === 200 || res.status === 206,
+            `FapHouse stream playable with HTTP ${res.status} (${res.headers["content-type"]})`
+          );
+        } catch (e) {
+          assert(false, `FapHouse stream HTTP check failed: ${e.message}`);
+        }
+      }
+    } catch (e) {
+      assert(false, `FapHouse getStream error: ${e.message}`);
+    }
+  }
+
   console.log("\n==================================================");
   console.log(`TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
   console.log("==================================================");

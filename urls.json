@@ -36,5 +36,18 @@
       "https://filmyfly.ee",
       "https://filmyfly.io"
     ]
+  },
+  "faphouse": {
+    "name": "FapHouse",
+    "url": "https://faphouse2.com",
+    "mirrors": [
+      "https://faphouse2.com",
+      "https://faphouse.com",
+      "https://pl.faphouse.com",
+      "https://de.faphouse.com",
+      "https://fr.faphouse.com",
+      "https://it.faphouse.com",
+      "https://es.faphouse.com"
+    ]
   }
 }
