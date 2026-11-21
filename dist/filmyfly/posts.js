@@ -1,5 +1,5 @@
 // @vega-provider filmyfly
-// @vega-version 1.0.1
+// @vega-version 1.0.2
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
