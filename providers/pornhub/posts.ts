@@ -125,36 +125,58 @@ async function searchApi(query, page, opts) {
   var axios = opts.axios;
   var commonHeaders = opts.commonHeaders;
   var signal = opts.signal;
-  var apiUrl =
-    API_BASE_URL +
-    "/search?search=" +
-    encodeURIComponent(query) +
-    "&page=" +
-    Math.max(1, page || 1) +
-    "&thumbsize=medium";
-  var retries = 2;
-  while (retries >= 0) {
+  var baseUrl = (opts && opts.baseUrl) || DEFAULT_BASE_URL;
+
+  var candidateBases = [baseUrl, "https://www.pornhub.com", "https://www.pornhub.org", "https://www.pornhub.net"].filter(
+    function (b, idx, arr) {
+      return arr.indexOf(b) === idx;
+    }
+  );
+
+  for (var bi = 0; bi < candidateBases.length; bi++) {
+    var curBase = candidateBases[bi];
+    var apiUrl =
+      curBase +
+      "/webmasters/search?search=" +
+      encodeURIComponent(query) +
+      "&page=" +
+      Math.max(1, page || 1) +
+      "&thumbsize=medium";
+
     try {
       var res = await axios.get(apiUrl, {
-        timeout: 12000,
+        timeout: 9000,
         headers: Object.assign({}, commonHeaders, {
           Accept: "application/json",
           "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          Referer: DEFAULT_BASE_URL + "/",
+          Referer: curBase + "/",
         }),
         signal: signal,
         maxRedirects: 5,
       });
+
+      if (res.request && res.request.responseURL && opts.kvStore) {
+        try {
+          var u = new URL(res.request.responseURL);
+          var origin = u.origin.replace(/\/+$/, "");
+          if (origin && origin.startsWith("http") && origin !== baseUrl) {
+            opts.kvStore.set("pornhub_learnedDomain", origin);
+          }
+        } catch (e) {}
+      }
+
       var data = res.data;
       if (typeof data === "string") {
         try {
           data = JSON.parse(data);
         } catch (e) {
-          return [];
+          continue;
         }
       }
       var videos = (data && data.videos) || [];
+      if (!Array.isArray(videos)) continue;
+
       var posts = [];
       var seen = {};
       for (var i = 0; i < videos.length; i++) {
@@ -181,17 +203,10 @@ async function searchApi(query, page, opts) {
       });
       return posts;
     } catch (err) {
-      retries--;
-      if (retries >= 0) {
-        await new Promise(function (r) {
-          setTimeout(r, 600);
-        });
-        continue;
-      }
-      console.error("PornHub api error:", err && err.message ? err.message : err);
-      return [];
+      // try next candidate base
     }
   }
+  return [];
 }
 
 function getCategory(filter) {
@@ -351,6 +366,8 @@ const getPostsImpl = async function (params) {
     axios: axios,
     commonHeaders: commonHeaders,
     signal: signal,
+    baseUrl: baseUrl,
+    kvStore: kvStore,
   };
 
   // 3D-only mode ("3D content only" toggle in the provider settings):
@@ -386,8 +403,9 @@ const getPostsImpl = async function (params) {
       return [];
     }
 
-    // Maximum content, nothing skipped: deduplicate distinct terms and
-    // throttle in batches of 4 to prevent server connection drops (read ECONNRESET).
+    // High performance category loading: deduplicate distinct terms and
+    // query top 3 distinct terms in parallel rotating by term-page (tp).
+    // This completes in ~500ms rather than stalling mobile connections with 18 sequential calls.
     var fetchTermPage = async function (tp) {
       var pageIndex = Math.max(0, tp - 1);
       var distinctQueries = [];
@@ -398,21 +416,20 @@ const getPostsImpl = async function (params) {
         seenTerms[term] = true;
         distinctQueries.push(term);
       }
-      var groups = [];
-      for (var b = 0; b < distinctQueries.length; b += 4) {
-        var batch = distinctQueries.slice(b, b + 4);
-        var batchRes = await Promise.all(
-          batch.map(function (term) {
-            return searchApi(term, pageIndex + 1, apiOpts);
-          })
-        );
-        for (var bi = 0; bi < batchRes.length; bi++) groups.push(batchRes[bi]);
-        if (b + 4 < distinctQueries.length) {
-          await new Promise(function (r) {
-            setTimeout(r, 120);
-          });
-        }
+      if (distinctQueries.length === 0) return [];
+
+      var startIdx = (pageIndex * 3) % distinctQueries.length;
+      var selected = distinctQueries.slice(startIdx, startIdx + 3);
+      if (selected.length < 3 && distinctQueries.length > selected.length) {
+        selected = selected.concat(distinctQueries.slice(0, 3 - selected.length));
       }
+
+      var groups = await Promise.all(
+        selected.map(function (term) {
+          return searchApi(term, pageIndex + 1, apiOpts);
+        })
+      );
+
       var merged = [];
       var maxLen = 0;
       for (var g = 0; g < groups.length; g++) maxLen = Math.max(maxLen, groups[g].length);
@@ -481,6 +498,8 @@ const getSearchPostsImpl = async function (params) {
     axios: axios,
     commonHeaders: commonHeaders,
     signal: signal,
+    baseUrl: baseUrl,
+    kvStore: kvStore,
   };
 
   // One API search page. In 3D mode the plain page is intersected with

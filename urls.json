@@ -19,7 +19,10 @@
     "name": "PornHub",
     "url": "https://www.pornhub.com",
     "mirrors": [
-      "https://www.pornhub.com"
+      "https://www.pornhub.com",
+      "https://www.pornhub.org",
+      "https://www.pornhub.net",
+      "https://rt.pornhub.com"
     ]
   },
   "filmyfly": {

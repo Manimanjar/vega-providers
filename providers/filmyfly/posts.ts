@@ -1,83 +1,9 @@
 import { Post, ProviderContext } from "../types";
+import { getBaseUrl, recordRedirect } from "./domain";
 
 "use strict";
 
-const URLS_ENDPOINT =
-  "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
-const DEFAULT_BASE_URL = "https://filmyfly.kred";
 const SEARCH_API_ENDPOINT = "https://webfind.filmyflydla.space";
-const BASE_CACHE_KEY = "filmyfly_baseUrlCacheV1";
-
-let memoryCache = { data: null as any, expiresAt: 0 };
-
-async function getBase(kvStore: any, axios: any): Promise<string> {
-  if (kvStore && typeof kvStore.get === "function") {
-    try {
-      const custom = await kvStore.get("baseUrlOverride");
-      if (custom && typeof custom === "string" && custom.trim().length > 0) {
-        const cleanCustom = custom.trim().replace(/\/+$/, "");
-        if (cleanCustom !== DEFAULT_BASE_URL) {
-          return cleanCustom;
-        }
-      }
-    } catch (e) {}
-  }
-
-  const now = Date.now();
-  if (memoryCache.data && now < memoryCache.expiresAt) {
-    const cachedEntry = memoryCache.data["filmyfly"];
-    if (cachedEntry && cachedEntry.url) {
-      return cachedEntry.url.replace(/\/+$/, "");
-    }
-  }
-
-  if (kvStore && typeof kvStore.get === "function") {
-    try {
-      const cachedRaw = await kvStore.get(BASE_CACHE_KEY);
-      if (cachedRaw) {
-        const cached =
-          typeof cachedRaw === "string" ? JSON.parse(cachedRaw) : cachedRaw;
-        if (cached && cached.url && cached.expiresAt > Date.now()) {
-          return String(cached.url).replace(/\/+$/, "");
-        }
-      }
-    } catch (e) {}
-  }
-
-  if (axios) {
-    try {
-      const res = await axios.get(URLS_ENDPOINT, { timeout: 3000 });
-      if (res.data && typeof res.data === "object") {
-        memoryCache.data = res.data;
-        memoryCache.expiresAt = now + 3600000;
-        const entry = res.data["filmyfly"];
-        if (entry && entry.url) {
-          const cleanEntry = entry.url.replace(/\/+$/, "");
-          if (kvStore && typeof kvStore.set === "function") {
-            try {
-              await kvStore.set(
-                BASE_CACHE_KEY,
-                JSON.stringify({ url: cleanEntry, expiresAt: now + 3600000 })
-              );
-            } catch (e) {}
-          }
-          return cleanEntry;
-        }
-      }
-    } catch (e) {}
-  }
-
-  if (kvStore && typeof kvStore.get === "function") {
-    try {
-      const learned = await kvStore.get("filmyfly_learnedDomain");
-      if (learned && typeof learned === "string" && learned.startsWith("http")) {
-        return learned.replace(/\/+$/, "");
-      }
-    } catch (e) {}
-  }
-
-  return DEFAULT_BASE_URL;
-}
 
 function extractYearOrQuality(title: string): string {
   if (!title) return "";
@@ -153,7 +79,7 @@ export const getPosts = async function ({
   providerContext: ProviderContext;
 }): Promise<Post[]> {
   const { axios, cheerio, commonHeaders, kvStore } = providerContext;
-  const baseUrl = await getBase(kvStore, axios);
+  const baseUrl = await getBaseUrl(kvStore, axios);
   const curPage = Math.max(1, page || 1);
 
   // Genre filter route (via fast Search API)
@@ -194,16 +120,7 @@ export const getPosts = async function ({
       timeout: 10000,
     });
 
-    // Check runtime redirect learning
-    if (res.request && res.request.responseURL) {
-      try {
-        const u = new URL(res.request.responseURL);
-        const origin = u.origin;
-        if (origin && origin !== baseUrl && origin.startsWith("http")) {
-          kvStore?.set("filmyfly_learnedDomain", origin);
-        }
-      } catch (e) {}
-    }
+    recordRedirect(res, baseUrl, kvStore);
 
     const html = res.data || "";
     const $ = cheerio.load(html);
@@ -252,7 +169,7 @@ export const getSearchPosts = async function ({
   providerContext: ProviderContext;
 }): Promise<Post[]> {
   const { axios, cheerio, commonHeaders, kvStore } = providerContext;
-  const baseUrl = await getBase(kvStore, axios);
+  const baseUrl = await getBaseUrl(kvStore, axios);
   const curPage = Math.max(1, page || 1);
   const query = (searchQuery || "").trim();
 
@@ -316,6 +233,8 @@ export const getSearchPosts = async function ({
       signal,
       timeout: 10000,
     });
+
+    recordRedirect(res, baseUrl, kvStore);
 
     const html = res.data || "";
     const $ = cheerio.load(html);

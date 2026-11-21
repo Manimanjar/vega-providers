@@ -67,6 +67,9 @@ export const getMeta = async function ({
       headers: Object.assign({}, commonHeaders, {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
         Referer: baseUrl + "/",
       }),
       timeout: 12000,
@@ -111,11 +114,36 @@ export const getMeta = async function ({
       if (t && tags.indexOf(t) === -1 && tags.length < 30) tags.push(t);
     });
 
-    var info = {
+    // Record runtime redirect if domain changed (e.g. .com -> .org)
+    if (res.request && res.request.responseURL) {
+      try {
+        var u = new URL(res.request.responseURL);
+        var origin = u.origin.replace(/\/+$/, "");
+        if (origin && origin.startsWith("http") && origin !== baseUrl) {
+          kvStore?.set("pornhub_learnedDomain", origin);
+        }
+      } catch (e) {}
+    }
+
+    var info: Info = {
       title: title,
       image: image,
+      poster: image,
       synopsis: synopsis,
+      type: "movie",
       tags: tags,
+      linkList: [
+        {
+          title: "Stream",
+          directLinks: [
+            {
+              title: title || "Watch",
+              link: url,
+              type: "movie",
+            },
+          ],
+        },
+      ],
     };
     if (views > 0) info.views = views;
     if (rating > 0) info.rating = rating;
@@ -123,6 +151,19 @@ export const getMeta = async function ({
     return info;
   } catch (err) {
     console.error("PornHub meta error:", err && err.message ? err.message : err);
-    return { title: "Video", image: "", synopsis: "", tags: [] };
+    return {
+      title: "Video",
+      image: "",
+      poster: "",
+      synopsis: "",
+      type: "movie",
+      tags: [],
+      linkList: [
+        {
+          title: "Stream",
+          directLinks: [{ title: "Watch", link: url, type: "movie" }],
+        },
+      ],
+    };
   }
 };

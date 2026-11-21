@@ -1,82 +1,7 @@
 import { Info, LinkListGroup, DirectLink, ProviderContext } from "../types";
+import { getBaseUrl, recordRedirect } from "./domain";
 
 "use strict";
-
-const URLS_ENDPOINT =
-  "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
-const DEFAULT_BASE_URL = "https://filmyfly.kred";
-const BASE_CACHE_KEY = "filmyfly_baseUrlCacheV1";
-
-let memoryCache = { data: null as any, expiresAt: 0 };
-
-async function getBase(kvStore: any, axios: any): Promise<string> {
-  if (kvStore && typeof kvStore.get === "function") {
-    try {
-      const custom = await kvStore.get("baseUrlOverride");
-      if (custom && typeof custom === "string" && custom.trim().length > 0) {
-        const cleanCustom = custom.trim().replace(/\/+$/, "");
-        if (cleanCustom !== DEFAULT_BASE_URL) {
-          return cleanCustom;
-        }
-      }
-    } catch (e) {}
-  }
-
-  const now = Date.now();
-  if (memoryCache.data && now < memoryCache.expiresAt) {
-    const cachedEntry = memoryCache.data["filmyfly"];
-    if (cachedEntry && cachedEntry.url) {
-      return cachedEntry.url.replace(/\/+$/, "");
-    }
-  }
-
-  if (kvStore && typeof kvStore.get === "function") {
-    try {
-      const cachedRaw = await kvStore.get(BASE_CACHE_KEY);
-      if (cachedRaw) {
-        const cached =
-          typeof cachedRaw === "string" ? JSON.parse(cachedRaw) : cachedRaw;
-        if (cached && cached.url && cached.expiresAt > Date.now()) {
-          return String(cached.url).replace(/\/+$/, "");
-        }
-      }
-    } catch (e) {}
-  }
-
-  if (axios) {
-    try {
-      const res = await axios.get(URLS_ENDPOINT, { timeout: 3000 });
-      if (res.data && typeof res.data === "object") {
-        memoryCache.data = res.data;
-        memoryCache.expiresAt = now + 3600000;
-        const entry = res.data["filmyfly"];
-        if (entry && entry.url) {
-          const cleanEntry = entry.url.replace(/\/+$/, "");
-          if (kvStore && typeof kvStore.set === "function") {
-            try {
-              await kvStore.set(
-                BASE_CACHE_KEY,
-                JSON.stringify({ url: cleanEntry, expiresAt: now + 3600000 })
-              );
-            } catch (e) {}
-          }
-          return cleanEntry;
-        }
-      }
-    } catch (e) {}
-  }
-
-  if (kvStore && typeof kvStore.get === "function") {
-    try {
-      const learned = await kvStore.get("filmyfly_learnedDomain");
-      if (learned && typeof learned === "string" && learned.startsWith("http")) {
-        return learned.replace(/\/+$/, "");
-      }
-    } catch (e) {}
-  }
-
-  return DEFAULT_BASE_URL;
-}
 
 function parseDurationSeconds(text: string): number {
   if (!text) return 0;
@@ -92,14 +17,15 @@ async function parseLinkmakePage(
   linkmakeUrl: string,
   axios: any,
   cheerio: any,
-  isSeries: boolean
+  isSeries: boolean,
+  referer?: string
 ): Promise<LinkListGroup[]> {
   try {
     const res = await axios.get(linkmakeUrl, {
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Referer: "https://filmyfly.kred/",
+        Referer: referer || "https://linkmake.in/",
       },
       timeout: 10000,
     });
@@ -198,7 +124,7 @@ export const getMeta = async function ({
   providerContext: ProviderContext;
 }): Promise<Info> {
   const { axios, cheerio, commonHeaders, kvStore } = providerContext;
-  const baseUrl = await getBase(kvStore, axios);
+  const baseUrl = await getBaseUrl(kvStore, axios);
   const movieUrl = link.startsWith("http")
     ? link
     : `${baseUrl}${link.startsWith("/") ? "" : "/"}${link}`;
@@ -213,6 +139,8 @@ export const getMeta = async function ({
       },
       timeout: 12000,
     });
+
+    recordRedirect(res, baseUrl, kvStore);
 
     const html = res.data || "";
     const $ = cheerio.load(html);
@@ -277,7 +205,7 @@ export const getMeta = async function ({
     // Follow each link protector / download URL to extract actual video links
     for (const dl of downloadPageUrls) {
       if (dl.url.includes("linkmake.in")) {
-        const groups = await parseLinkmakePage(dl.url, axios, cheerio, isSeries);
+        const groups = await parseLinkmakePage(dl.url, axios, cheerio, isSeries, movieUrl);
         if (groups.length > 0) {
           linkList.push(...groups);
         } else {
