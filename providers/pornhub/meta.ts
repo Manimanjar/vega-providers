@@ -108,6 +108,8 @@ export const getMeta = async function ({
   const candidateBases = [
     baseUrl,
     "https://www.pornhub.com",
+    "https://rt.pornhub.com",
+    "https://de.pornhub.com",
     "https://www.pornhub.org",
     "https://www.pornhub.net",
   ].filter((b, idx, arr) => arr.indexOf(b) === idx);
@@ -261,7 +263,10 @@ export const getMeta = async function ({
   };
 
   if (views > 0) info.views = views;
-  if (rating > 0) info.rating = rating;
+  if (rating > 0) {
+    const r10 = rating > 10 ? (rating / 10).toFixed(1) : String(rating);
+    info.rating = `${r10}/10`;
+  }
   if (durationSec > 0) info.duration = durationSec;
 
   return info;

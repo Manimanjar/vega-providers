@@ -26,7 +26,7 @@ export interface Info {
   type?: "movie" | "series";
   tags?: string[];
   views?: number;
-  rating?: number;
+  rating?: string;
   duration?: number;
   linkList?: LinkListGroup[];
 }
