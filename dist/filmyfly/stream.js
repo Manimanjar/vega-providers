@@ -51,32 +51,70 @@ async function extractFromFilesdl(filesdlUrl, axios, cheerio, signal) {
     const $ = cheerio.load(html);
     const titleText = $(".title").first().text().trim() || "";
     const defaultQuality = extractQuality(titleText);
+    const q = defaultQuality !== "auto" ? defaultQuality : "1080";
+    const fffastLink = $("a[href*='zdownload.php'], a[href*='fffast']").first().attr("href");
+    if (fffastLink && fffastLink.startsWith("http")) {
+      const cleanFffast = fffastLink.replace(/&amp;/g, "&");
+      try {
+        const redRes = await axios.get(cleanFffast, {
+          headers: { "User-Agent": USER_AGENT, Referer: targetUrl },
+          maxRedirects: 0,
+          validateStatus: (s) => s >= 200 && s < 400,
+          timeout: 4e3
+        });
+        const location = redRes.headers.location;
+        if (location && location.startsWith("http")) {
+          seen.add(location);
+          streams.push({
+            server: `Google Direct Fast Stream (10Gbps) [${q}p]`,
+            link: location,
+            type: "mp4",
+            quality: q,
+            headers: { "User-Agent": USER_AGENT }
+          });
+        }
+      } catch (e) {
+        if (!seen.has(cleanFffast)) {
+          seen.add(cleanFffast);
+          streams.push({
+            server: `Fast Direct Stream (10Gbps) [${q}p]`,
+            link: cleanFffast,
+            type: "mp4",
+            quality: q,
+            headers: { "User-Agent": USER_AGENT, Referer: targetUrl }
+          });
+        }
+      }
+    }
     $("a[href*='.r2.dev']").each((_, el) => {
       let href = $(el).attr("href");
-      if (!href || seen.has(href)) return;
+      if (!href || href.includes("t.me") || href.includes("telegram")) return;
       if (!href.startsWith("http")) return;
-      if (href.includes("t.me") || href.includes("telegram")) return;
-      if (href.includes(".r2.dev") && !href.includes("&token=")) {
+      href = href.replace(/&amp;/g, "&");
+      if (!href.includes("token=")) {
         const randToken = Math.floor(1e9 + Math.random() * 9e9);
-        href = `${href}&token=${randToken}`;
+        href = `${href}${href.includes("?") ? "&" : "?"}token=${randToken}`;
       }
-      seen.add(href);
-      const text = $(el).text().trim() || titleText;
-      const q = extractQuality(text) !== "auto" ? extractQuality(text) : defaultQuality;
-      streams.push({
-        server: `Cloud Direct (High Speed) [${q !== "auto" ? q : "1080"}p]`,
-        link: href,
-        type: "mp4",
-        quality: q !== "auto" ? q : "1080",
-        headers: {
-          "User-Agent": USER_AGENT,
-          Referer: targetUrl
-        }
-      });
+      if (!seen.has(href)) {
+        seen.add(href);
+        const text = $(el).text().trim() || titleText;
+        const itemQ = extractQuality(text) !== "auto" ? extractQuality(text) : q;
+        streams.push({
+          server: `Cloud Direct (High Speed) [${itemQ}p]`,
+          link: href,
+          type: "mp4",
+          quality: itemQ,
+          headers: {
+            "User-Agent": USER_AGENT,
+            Referer: targetUrl
+          }
+        });
+      }
     });
     $("a[href*='pixeldrain.com/u/'], a[href*='iwebp.store/u/']").each((_, el) => {
-      const href = $(el).attr("href");
+      let href = $(el).attr("href");
       if (!href) return;
+      href = href.replace(/&amp;/g, "&");
       const match = href.match(/\/u\/([a-zA-Z0-9]+)/);
       if (match) {
         const pid = match[1];
@@ -84,7 +122,6 @@ async function extractFromFilesdl(filesdlUrl, axios, cheerio, signal) {
         const streamUrl = `https://pixeldrain.com/api/file/${pid}`;
         if (!seen.has(streamUrl)) {
           seen.add(streamUrl);
-          const q = defaultQuality !== "auto" ? defaultQuality : "1080";
           streams.push({
             server: `Pixeldrain Fast Stream [${q}p]`,
             link: streamUrl,
@@ -99,7 +136,7 @@ async function extractFromFilesdl(filesdlUrl, axios, cheerio, signal) {
       const mediaRe = /https?:\/\/[^"'\s<>]+\.(?:mp4|mkv|m3u8)[^"'\s<>]*/gi;
       let m;
       while ((m = mediaRe.exec(html)) !== null) {
-        const u = m[0];
+        const u = m[0].replace(/&amp;/g, "&");
         if (!seen.has(u)) {
           seen.add(u);
           const isHls = u.includes(".m3u8");
@@ -107,7 +144,7 @@ async function extractFromFilesdl(filesdlUrl, axios, cheerio, signal) {
             server: isHls ? "Direct HLS Stream" : "Direct Video Stream",
             link: u,
             type: isHls ? "m3u8" : "mp4",
-            quality: defaultQuality,
+            quality: q,
             headers: { "User-Agent": USER_AGENT, Referer: targetUrl }
           });
         }
