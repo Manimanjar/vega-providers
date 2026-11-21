@@ -1202,7 +1202,6 @@ function groupSeriesPosts(posts) {
 // providers/pornhub/posts.ts
 var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
 var DEFAULT_BASE_URL = "https://www.pornhub.com";
-var API_BASE_URL = "https://www.pornhub.com/webmasters";
 var memoryCache = { data: null, expiresAt: 0 };
 function formatDuration(totalSeconds) {
   var s = Math.max(0, Math.floor(totalSeconds || 0));
@@ -1285,29 +1284,46 @@ async function searchApi(query, page, opts) {
   var axios = opts.axios;
   var commonHeaders = opts.commonHeaders;
   var signal = opts.signal;
-  var apiUrl = API_BASE_URL + "/search?search=" + encodeURIComponent(query) + "&page=" + Math.max(1, page || 1) + "&thumbsize=medium";
-  var retries = 2;
-  while (retries >= 0) {
+  var baseUrl = opts && opts.baseUrl || DEFAULT_BASE_URL;
+  var candidateBases = [baseUrl, "https://www.pornhub.com", "https://www.pornhub.org", "https://www.pornhub.net"].filter(
+    function(b, idx, arr) {
+      return arr.indexOf(b) === idx;
+    }
+  );
+  for (var bi = 0; bi < candidateBases.length; bi++) {
+    var curBase = candidateBases[bi];
+    var apiUrl = curBase + "/webmasters/search?search=" + encodeURIComponent(query) + "&page=" + Math.max(1, page || 1) + "&thumbsize=medium";
     try {
       var res = await axios.get(apiUrl, {
-        timeout: 12e3,
+        timeout: 9e3,
         headers: Object.assign({}, commonHeaders, {
           Accept: "application/json",
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          Referer: DEFAULT_BASE_URL + "/"
+          Referer: curBase + "/"
         }),
         signal,
         maxRedirects: 5
       });
+      if (res.request && res.request.responseURL && opts.kvStore) {
+        try {
+          var u = new URL(res.request.responseURL);
+          var origin = u.origin.replace(/\/+$/, "");
+          if (origin && origin.startsWith("http") && origin !== baseUrl) {
+            opts.kvStore.set("pornhub_learnedDomain", origin);
+          }
+        } catch (e) {
+        }
+      }
       var data = res.data;
       if (typeof data === "string") {
         try {
           data = JSON.parse(data);
         } catch (e) {
-          return [];
+          continue;
         }
       }
       var videos = data && data.videos || [];
+      if (!Array.isArray(videos)) continue;
       var posts = [];
       var seen = {};
       for (var i = 0; i < videos.length; i++) {
@@ -1334,17 +1350,9 @@ async function searchApi(query, page, opts) {
       });
       return posts;
     } catch (err) {
-      retries--;
-      if (retries >= 0) {
-        await new Promise(function(r) {
-          setTimeout(r, 600);
-        });
-        continue;
-      }
-      console.error("PornHub api error:", err && err.message ? err.message : err);
-      return [];
     }
   }
+  return [];
 }
 function getCategory(filter) {
   return categories_config_default.categories.find(function(category) {
@@ -1497,7 +1505,9 @@ var getPostsImpl = async function(params) {
   var apiOpts = {
     axios,
     commonHeaders,
-    signal
+    signal,
+    baseUrl,
+    kvStore
   };
   var threeDContext = build3DContext({
     axios,
@@ -1533,21 +1543,17 @@ var getPostsImpl = async function(params) {
         seenTerms[term] = true;
         distinctQueries.push(term);
       }
-      var groups = [];
-      for (var b = 0; b < distinctQueries.length; b += 4) {
-        var batch = distinctQueries.slice(b, b + 4);
-        var batchRes = await Promise.all(
-          batch.map(function(term2) {
-            return searchApi(term2, pageIndex + 1, apiOpts);
-          })
-        );
-        for (var bi = 0; bi < batchRes.length; bi++) groups.push(batchRes[bi]);
-        if (b + 4 < distinctQueries.length) {
-          await new Promise(function(r) {
-            setTimeout(r, 120);
-          });
-        }
+      if (distinctQueries.length === 0) return [];
+      var startIdx = pageIndex * 3 % distinctQueries.length;
+      var selected = distinctQueries.slice(startIdx, startIdx + 3);
+      if (selected.length < 3 && distinctQueries.length > selected.length) {
+        selected = selected.concat(distinctQueries.slice(0, 3 - selected.length));
       }
+      var groups = await Promise.all(
+        selected.map(function(term2) {
+          return searchApi(term2, pageIndex + 1, apiOpts);
+        })
+      );
       var merged = [];
       var maxLen = 0;
       for (var g = 0; g < groups.length; g++) maxLen = Math.max(maxLen, groups[g].length);
@@ -1602,7 +1608,9 @@ var getSearchPostsImpl = async function(params) {
   var apiOpts = {
     axios,
     commonHeaders,
-    signal
+    signal,
+    baseUrl,
+    kvStore
   };
   var fetchSitePage = async function(sp) {
     var plain = await searchApi(searchQuery, sp, apiOpts);
