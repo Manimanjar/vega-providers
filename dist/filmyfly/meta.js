@@ -226,6 +226,15 @@ function recordRedirect(res, currentBase, kvStore) {
   }
 }
 
+// providers/filmyfly/posts.ts
+function upgradeImageUrl(url) {
+  if (!url) return "";
+  let clean = url;
+  if (clean.startsWith("//")) clean = "https:" + clean;
+  clean = clean.replace(/\/webp\/\d+-\d+-[12]x-/, "/webp/280-380-3x-");
+  return clean;
+}
+
 // providers/filmyfly/meta.ts
 function parseDurationSeconds(text) {
   if (!text) return 0;
@@ -332,8 +341,8 @@ var getMeta = async function({
     const html = res.data || "";
     const $ = cheerio.load(html);
     const title = $("h2").first().text().trim() || $(".movie-info .fname:contains('Name') span").text().trim() || $("title").text().replace(/»\s*FilmyFly.*/i, "").trim() || "Movie";
-    let image = $('meta[property="og:image"]').attr("content") || $(".movie-cover").attr("src") || "";
-    if (image.startsWith("//")) image = "https:" + image;
+    let rawImage = $('meta[property="og:image"]').attr("content") || $(".movie-cover").attr("src") || "";
+    let image = upgradeImageUrl(rawImage);
     const synopsis = $(".movie-info .fname:contains('Description') span").text().trim() || $('meta[property="og:description"]').attr("content") || "";
     const tags = [];
     const genreText = $(".movie-info .fname:contains('Genre') span").text().trim();

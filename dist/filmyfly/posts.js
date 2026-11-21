@@ -23,7 +23,8 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var posts_exports = {};
 __export(posts_exports, {
   getPosts: () => getPosts,
-  getSearchPosts: () => getSearchPosts
+  getSearchPosts: () => getSearchPosts,
+  upgradeImageUrl: () => upgradeImageUrl
 });
 module.exports = __toCommonJS(posts_exports);
 
@@ -242,6 +243,13 @@ function slug(title) {
   const s = String(title || "").replace(/[()]/g, "").replace(/[^A-Za-z0-9 ]/g, "").replace(/\s+/g, "-").replace(/^-+|-+$/g, "");
   return s !== "" ? s : "item";
 }
+function upgradeImageUrl(url) {
+  if (!url) return "";
+  let clean = url;
+  if (clean.startsWith("//")) clean = "https:" + clean;
+  clean = clean.replace(/\/webp\/\d+-\d+-[12]x-/, "/webp/280-380-3x-");
+  return clean;
+}
 function parseCards($, containerSelector, baseUrl) {
   const posts = [];
   const seen = /* @__PURE__ */ new Set();
@@ -257,8 +265,7 @@ function parseCards($, containerSelector, baseUrl) {
     if (seen.has(link)) return;
     seen.add(link);
     const imgEl = $el.find("img.row-thumb").first();
-    let image = imgEl.attr("src") || "";
-    if (image.startsWith("//")) image = "https:" + image;
+    let image = upgradeImageUrl(imgEl.attr("src") || "");
     let title = $el.find(".row-title").first().text().trim() || imgEl.attr("alt") || titleLinkEl.text().trim() || "Untitled";
     const tag = $el.find(".row-badge").first().text().trim() || void 0;
     const cornerTag = extractYearOrQuality(title) || void 0;
@@ -371,8 +378,7 @@ var getSearchPosts = async function({
         const link = `${baseUrl}/movie/${encodeURIComponent(
           item.filmyfly || ""
         )}/${encodeURIComponent(itemSlug)}.html`;
-        let image = item.poster || "";
-        if (image.startsWith("//")) image = "https:" + image;
+        let image = upgradeImageUrl(item.poster || "");
         return {
           title: item.title || "Untitled",
           link,
