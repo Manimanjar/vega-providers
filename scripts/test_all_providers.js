@@ -111,12 +111,16 @@ async function runTests() {
               ...(primary.headers || {}),
               Range: "bytes=0-1024",
             },
+            responseType: "stream",
             timeout: 8000,
           });
           assert(
             streamCheck.status === 200 || streamCheck.status === 206,
             `FilmyFly (${primary.server}) playable with HTTP ${streamCheck.status} (${streamCheck.headers["content-type"]})`
           );
+          if (streamCheck.data && typeof streamCheck.data.destroy === "function") {
+            streamCheck.data.destroy();
+          }
         } catch (e) {
           assert(false, `FilmyFly stream HTTP check failed for ${primary.server}: ${e.message}`);
         }

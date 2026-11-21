@@ -127,11 +127,16 @@ async function searchApi(query, page, opts) {
   var signal = opts.signal;
   var baseUrl = (opts && opts.baseUrl) || DEFAULT_BASE_URL;
 
-  var candidateBases = [baseUrl, "https://www.pornhub.com", "https://www.pornhub.org", "https://www.pornhub.net"].filter(
-    function (b, idx, arr) {
-      return arr.indexOf(b) === idx;
-    }
-  );
+  var candidateBases = [
+    baseUrl,
+    "https://www.pornhub.com",
+    "https://rt.pornhub.com",
+    "https://de.pornhub.com",
+    "https://www.pornhub.org",
+    "https://www.pornhub.net",
+  ].filter(function (b, idx, arr) {
+    return arr.indexOf(b) === idx;
+  });
 
   for (var bi = 0; bi < candidateBases.length; bi++) {
     var curBase = candidateBases[bi];
@@ -285,12 +290,12 @@ function build3DContext(opts) {
     },
     // Phase 2b of the sweep: the relation pool. Most relation videos
     // carry an incest or family tag, so search "taboo 3d" /
-    // "taboo sfm" / "stepfamily 3d" / "family 3d" / "cousin 3d" /
-    // "cousin sfm" and classify each hit by its relation words
-    // (title only — the API carries no tags). The API search is
-    // full-text AND, so a hit here is incest, family or cousin
-    // content by the site's own index; a hit with no specific
-    // relation word in the title belongs to Incest.
+    // "taboo sfm" / "stepfamily 3d" / "stepfamily sfm" / "family 3d" /
+    // "family sfm" / "cousin 3d" / "cousin sfm" and classify each hit
+    // by its relation words (title only — the API carries no tags).
+    // The API search is full-text AND, so a hit here is incest,
+    // family or cousin content by the site's own index; a hit with no
+    // specific relation word in the title belongs to Incest.
     fetchRelationPool: async function (pool) {
       var queries = ["taboo 3d", "taboo sfm", "stepfamily 3d", "stepfamily sfm", "family 3d", "family sfm", "cousin 3d", "cousin sfm"];
       var groups = await Promise.all(
