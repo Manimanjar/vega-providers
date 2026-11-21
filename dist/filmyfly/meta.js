@@ -1,5 +1,5 @@
 // @vega-provider filmyfly
-// @vega-version 1.0.0
+// @vega-version 1.0.1
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -260,9 +260,13 @@ async function parseLinkmakePage(linkmakeUrl, axios, cheerio, isSeries, referer)
         const $ep = cheerio.load(`<div>${epHtml}</div>`);
         const epDirectLinks = [];
         $ep(".dlink a, a[href*='filesdl']").each((_, a) => {
-          const href = $(a).attr("href");
-          const title = $(a).text().trim() || "Download";
+          let href = $(a).attr("href");
+          let title = $(a).text().trim() || "Watch";
           if (href && href.startsWith("http") && !href.includes("/Tg/") && !href.includes("t.me") && !title.toLowerCase().includes("telegram")) {
+            if (href.includes("filesdl") && href.includes("/drive/")) {
+              href = href.replace("/drive/", "/cloud/");
+            }
+            title = title.replace(/^download\s+/i, "");
             epDirectLinks.push({
               title,
               link: href,
@@ -281,9 +285,13 @@ async function parseLinkmakePage(linkmakeUrl, axios, cheerio, isSeries, referer)
     if (groups.length === 0) {
       const directLinks = [];
       $(".dlink a, a[href*='filesdl']").each((_, a) => {
-        const href = $(a).attr("href");
-        const title = $(a).text().trim() || "Download";
+        let href = $(a).attr("href");
+        let title = $(a).text().trim() || "Watch";
         if (href && href.startsWith("http") && !href.includes("/Tg/") && !href.includes("t.me") && !title.toLowerCase().includes("telegram")) {
+          if (href.includes("filesdl") && href.includes("/drive/")) {
+            href = href.replace("/drive/", "/cloud/");
+          }
+          title = title.replace(/^download\s+/i, "");
           directLinks.push({
             title,
             link: href,

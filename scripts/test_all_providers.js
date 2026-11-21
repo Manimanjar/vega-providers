@@ -70,7 +70,7 @@ async function runTests() {
     assert(false, `FilmyFly getSearchPosts error: ${e.message}`);
   }
 
-  let ffSampleDirectLink = "";
+  let ffSampleDirectLinks = [];
   if (ffSampleLink) {
     try {
       const meta = await ffMeta.getMeta({ link: ffSampleLink, providerContext: ffContext });
@@ -82,8 +82,7 @@ async function runTests() {
         const directLinks = meta.linkList[0].directLinks || [];
         assert(directLinks.length > 0, `FilmyFly first group has ${directLinks.length} directLinks`);
         if (directLinks.length > 0) {
-          ffSampleDirectLink = directLinks[0].link;
-          console.log(`       Sample stream link: ${ffSampleDirectLink}`);
+          ffSampleDirectLinks = [directLinks[0], directLinks[directLinks.length - 1]];
         }
       }
     } catch (e) {
@@ -91,38 +90,38 @@ async function runTests() {
     }
   }
 
-  if (ffSampleDirectLink) {
+  for (const dl of ffSampleDirectLinks) {
     try {
       const streams = await ffStream.getStream({
-        link: ffSampleDirectLink,
+        link: dl.link,
         type: "movie",
         providerContext: ffContext,
       });
-      assert(Array.isArray(streams) && streams.length > 0, `FilmyFly getStream returned ${streams.length} stream servers`);
+      assert(Array.isArray(streams) && streams.length > 0, `FilmyFly (${dl.title}) resolved ${streams.length} stream servers`);
       if (streams.length > 0) {
         const primary = streams[0];
-        assert(!!primary.link && primary.link.startsWith("http"), `FilmyFly primary stream URL: ${primary.server}`);
+        assert(!!primary.link && primary.link.startsWith("http"), `FilmyFly stream URL valid: ${primary.server}`);
         assert(primary.type === "mp4" || primary.type === "m3u8", `FilmyFly stream type: ${primary.type}`);
 
-        // Test real HTTP connectivity of stream
+        // Test real HTTP byte-range connectivity
         try {
           const streamCheck = await axios.get(primary.link, {
             headers: {
               ...(primary.headers || {}),
               Range: "bytes=0-1024",
             },
-            timeout: 6000,
+            timeout: 8000,
           });
           assert(
             streamCheck.status === 200 || streamCheck.status === 206,
-            `FilmyFly stream server responds with HTTP ${streamCheck.status} (${streamCheck.headers["content-type"]})`
+            `FilmyFly (${primary.server}) playable with HTTP ${streamCheck.status} (${streamCheck.headers["content-type"]})`
           );
         } catch (e) {
-          assert(false, `FilmyFly stream HTTP check failed: ${e.message}`);
+          assert(false, `FilmyFly stream HTTP check failed for ${primary.server}: ${e.message}`);
         }
       }
     } catch (e) {
-      assert(false, `FilmyFly getStream error: ${e.message}`);
+      assert(false, `FilmyFly getStream error for ${dl.title}: ${e.message}`);
     }
   }
 
@@ -146,8 +145,9 @@ async function runTests() {
     const dur = Date.now() - t0;
     assert(Array.isArray(posts) && posts.length > 0, `PornHub homepage loaded ${posts.length} posts in ${dur}ms`);
     if (posts.length > 0) {
-      assert(!!posts[0].title, `PornHub first post title: ${posts[0].title.slice(0, 40)}...`);
-      assert(!!posts[0].link && posts[0].link.startsWith("http"), `PornHub post link: ${posts[0].link}`);
+      assert(!!posts[0].title, `PornHub first post has valid title`);
+      assert(!!posts[0].image && posts[0].image.startsWith("http"), `PornHub first post has thumbnail image`);
+      assert(!!posts[0].link && posts[0].link.startsWith("http"), `PornHub post link is valid URL`);
       phSampleLink = posts[0].link;
     }
   } catch (e) {
@@ -187,9 +187,10 @@ async function runTests() {
   if (phSampleLink) {
     try {
       const meta = await phMeta.getMeta({ link: phSampleLink, providerContext: phContext });
-      assert(!!meta.title && meta.title !== "Video", `PornHub getMeta returned title: ${meta.title.slice(0, 40)}...`);
+      assert(!!meta.title && meta.title !== "Video", `PornHub getMeta returned valid non-placeholder title`);
       assert(meta.type === "movie", `PornHub getMeta has type: '${meta.type}'`);
-      assert(!!meta.poster || !!meta.image, `PornHub getMeta has poster/image`);
+      assert(!!meta.poster || !!meta.image, `PornHub getMeta has poster/image populated`);
+      assert(!!meta.synopsis, `PornHub getMeta has synopsis populated`);
       assert(Array.isArray(meta.linkList) && meta.linkList.length > 0, `PornHub getMeta populated linkList (${meta.linkList?.length} groups)`);
 
       if (meta.linkList && meta.linkList.length > 0) {
@@ -211,9 +212,8 @@ async function runTests() {
       assert(Array.isArray(streams) && streams.length > 0, `PornHub getStream resolved ${streams.length} video streams`);
       if (streams.length > 0) {
         const hlsStream = streams.find((s) => s.type === "m3u8") || streams[0];
-        console.log(`       Stream resolved: ${hlsStream.server} (${hlsStream.type})`);
-        assert(!!hlsStream.link && hlsStream.link.startsWith("http"), `Stream URL valid: ${hlsStream.link.slice(0, 50)}...`);
-        assert(!!hlsStream.headers && !!hlsStream.headers.Referer, `Stream has valid Referer header: ${hlsStream.headers?.Referer}`);
+        assert(!!hlsStream.link && hlsStream.link.startsWith("http"), `Stream URL valid`);
+        assert(!!hlsStream.headers && !!hlsStream.headers.Referer, `Stream has valid Referer header`);
 
         // Verify CDN response
         try {

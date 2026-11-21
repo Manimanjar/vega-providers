@@ -1,5 +1,5 @@
 // @vega-provider filmyfly
-// @vega-version 1.0.0
+// @vega-version 1.0.1
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -27,17 +27,19 @@ __export(stream_exports, {
 module.exports = __toCommonJS(stream_exports);
 var USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 function extractQuality(str) {
-  if (/2160p|4k/i.test(str)) return "2160";
-  if (/1080p/i.test(str)) return "1080";
-  if (/720p/i.test(str)) return "720";
-  if (/480p/i.test(str)) return "480";
+  if (/\b(?:2160p?|4k|uhd)\b/i.test(str)) return "2160";
+  if (/\b(?:1080p?|fhd)\b/i.test(str)) return "1080";
+  if (/\b(?:720p?)\b/i.test(str)) return "720";
+  if (/\b(?:480p?|sd)\b/i.test(str)) return "480";
+  if (/\bhd\b/i.test(str)) return "720";
   return "auto";
 }
 async function extractFromFilesdl(filesdlUrl, axios, cheerio, signal) {
   const streams = [];
   const seen = /* @__PURE__ */ new Set();
+  const targetUrl = filesdlUrl.replace("/drive/", "/cloud/");
   try {
-    const res = await axios.get(filesdlUrl, {
+    const res = await axios.get(targetUrl, {
       headers: {
         "User-Agent": USER_AGENT,
         Referer: "https://linkmake.in/"
@@ -49,7 +51,7 @@ async function extractFromFilesdl(filesdlUrl, axios, cheerio, signal) {
     const $ = cheerio.load(html);
     const titleText = $(".title").first().text().trim() || "";
     const defaultQuality = extractQuality(titleText);
-    $("a[href*='.r2.dev'], a.download-link, a.button2").each((_, el) => {
+    $("a[href*='.r2.dev']").each((_, el) => {
       let href = $(el).attr("href");
       if (!href || seen.has(href)) return;
       if (!href.startsWith("http")) return;
@@ -59,108 +61,39 @@ async function extractFromFilesdl(filesdlUrl, axios, cheerio, signal) {
         href = `${href}&token=${randToken}`;
       }
       seen.add(href);
-      const text = $(el).text().trim() || "Cloud Direct";
+      const text = $(el).text().trim() || titleText;
       const q = extractQuality(text) !== "auto" ? extractQuality(text) : defaultQuality;
       streams.push({
-        server: `Cloud Direct (High Speed) [${q}p]`,
+        server: `Cloud Direct (High Speed) [${q !== "auto" ? q : "1080"}p]`,
         link: href,
         type: "mp4",
-        quality: q,
+        quality: q !== "auto" ? q : "1080",
         headers: {
           "User-Agent": USER_AGENT,
-          Referer: filesdlUrl
+          Referer: targetUrl
         }
       });
     });
-    $("a[href*='zdownload.php'], a.button").each((_, el) => {
+    $("a[href*='pixeldrain.com/u/'], a[href*='iwebp.store/u/']").each((_, el) => {
       const href = $(el).attr("href");
-      if (!href || seen.has(href)) return;
-      if (!href.startsWith("http")) return;
-      seen.add(href);
-      const text = $(el).text().trim() || "Direct Download";
-      const q = extractQuality(text) !== "auto" ? extractQuality(text) : defaultQuality;
-      streams.push({
-        server: `Direct Download 10Gbps [${q}p]`,
-        link: href,
-        type: "mp4",
-        quality: q,
-        headers: {
-          "User-Agent": USER_AGENT,
-          Referer: filesdlUrl
+      if (!href) return;
+      const match = href.match(/\/u\/([a-zA-Z0-9]+)/);
+      if (match) {
+        const pid = match[1];
+        if (pid.toLowerCase() === "bigxxx") return;
+        const streamUrl = `https://pixeldrain.com/api/file/${pid}`;
+        if (!seen.has(streamUrl)) {
+          seen.add(streamUrl);
+          const q = defaultQuality !== "auto" ? defaultQuality : "1080";
+          streams.push({
+            server: `Pixeldrain Fast Stream [${q}p]`,
+            link: streamUrl,
+            type: "mp4",
+            quality: q,
+            headers: { "User-Agent": USER_AGENT }
+          });
         }
-      });
-    });
-    $("a[href*='pixeldrain'], a[href*='iwebp.store/u/']").each((_, el) => {
-      const href = $(el).attr("href");
-      if (!href || seen.has(href) || !href.startsWith("http")) return;
-      seen.add(href);
-      streams.push({
-        server: "Pixeldrain Fast Server",
-        link: href,
-        type: "mp4",
-        quality: defaultQuality,
-        headers: { "User-Agent": USER_AGENT }
-      });
-    });
-    $("a[href*='hubcloud']").each((_, el) => {
-      const href = $(el).attr("href");
-      if (!href || seen.has(href) || !href.startsWith("http")) return;
-      seen.add(href);
-      streams.push({
-        server: "HubCloud Server",
-        link: href,
-        type: "mp4",
-        quality: defaultQuality,
-        headers: { "User-Agent": USER_AGENT }
-      });
-    });
-    $("a[href*='gofile.io']").each((_, el) => {
-      const href = $(el).attr("href");
-      if (!href || seen.has(href) || !href.startsWith("http")) return;
-      seen.add(href);
-      streams.push({
-        server: "GoFile Server",
-        link: href,
-        type: "mp4",
-        quality: defaultQuality,
-        headers: { "User-Agent": USER_AGENT }
-      });
-    });
-    $("a[href*='fuckingfast.net'], a[href*='buzzheavier']").each((_, el) => {
-      const href = $(el).attr("href");
-      if (!href || seen.has(href) || !href.startsWith("http")) return;
-      seen.add(href);
-      streams.push({
-        server: "Buzzheavier Server",
-        link: href,
-        type: "mp4",
-        quality: defaultQuality,
-        headers: { "User-Agent": USER_AGENT }
-      });
-    });
-    $("a[href*='gdflix']").each((_, el) => {
-      const href = $(el).attr("href");
-      if (!href || seen.has(href) || !href.startsWith("http")) return;
-      seen.add(href);
-      streams.push({
-        server: "GDFlix Server",
-        link: href,
-        type: "mp4",
-        quality: defaultQuality,
-        headers: { "User-Agent": USER_AGENT }
-      });
-    });
-    $("a[href*='drivenext']").each((_, el) => {
-      const href = $(el).attr("href");
-      if (!href || seen.has(href) || !href.startsWith("http")) return;
-      seen.add(href);
-      streams.push({
-        server: "Drivenext Server",
-        link: href,
-        type: "mp4",
-        quality: defaultQuality,
-        headers: { "User-Agent": USER_AGENT }
-      });
+      }
     });
     if (streams.length === 0) {
       const mediaRe = /https?:\/\/[^"'\s<>]+\.(?:mp4|mkv|m3u8)[^"'\s<>]*/gi;
@@ -175,7 +108,7 @@ async function extractFromFilesdl(filesdlUrl, axios, cheerio, signal) {
             link: u,
             type: isHls ? "m3u8" : "mp4",
             quality: defaultQuality,
-            headers: { "User-Agent": USER_AGENT, Referer: filesdlUrl }
+            headers: { "User-Agent": USER_AGENT, Referer: targetUrl }
           });
         }
       }
@@ -194,24 +127,28 @@ var getStream = async function({
 }) {
   const { axios, cheerio } = providerContext;
   if (!link) return [];
-  if (/\.(m3u8|mp4|mkv)(\?|$)/i.test(link)) {
-    const isHls = link.includes(".m3u8");
+  let cleanLink = link;
+  if (cleanLink.includes("filesdl") && cleanLink.includes("/drive/")) {
+    cleanLink = cleanLink.replace("/drive/", "/cloud/");
+  }
+  if (/\.(m3u8|mp4|mkv)(\?|$)/i.test(cleanLink)) {
+    const isHls = cleanLink.includes(".m3u8");
     return [
       {
         server: "Direct Stream",
-        link,
+        link: cleanLink,
         type: isHls ? "m3u8" : "mp4",
-        quality: extractQuality(link),
+        quality: extractQuality(cleanLink),
         headers: { "User-Agent": USER_AGENT }
       }
     ];
   }
-  if (link.includes("filesdl.in") || link.includes("/cloud/") || link.includes("/drive/")) {
-    return extractFromFilesdl(link, axios, cheerio, signal);
+  if (cleanLink.includes("filesdl") || cleanLink.includes("/cloud/") || cleanLink.includes("/drive/")) {
+    return extractFromFilesdl(cleanLink, axios, cheerio, signal);
   }
-  if (link.includes("linkmake.in")) {
+  if (cleanLink.includes("linkmake.in")) {
     try {
-      const res = await axios.get(link, {
+      const res = await axios.get(cleanLink, {
         headers: { "User-Agent": USER_AGENT },
         signal,
         timeout: 1e4
@@ -220,8 +157,11 @@ var getStream = async function({
       const $ = cheerio.load(html);
       const filesdlUrls = [];
       $(".dlink a, a[href*='filesdl']").each((_, a) => {
-        const href = $(a).attr("href");
-        if (href && href.startsWith("http")) filesdlUrls.push(href);
+        let href = $(a).attr("href");
+        if (href && href.startsWith("http")) {
+          if (href.includes("/drive/")) href = href.replace("/drive/", "/cloud/");
+          filesdlUrls.push(href);
+        }
       });
       const allStreams = [];
       for (const furl of filesdlUrls.slice(0, 3)) {
@@ -233,7 +173,7 @@ var getStream = async function({
     }
   }
   try {
-    const res = await axios.get(link, {
+    const res = await axios.get(cleanLink, {
       headers: { "User-Agent": USER_AGENT },
       signal,
       timeout: 1e4

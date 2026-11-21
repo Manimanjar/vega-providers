@@ -54,8 +54,8 @@ async function parseLinkmakePage(
         const epDirectLinks: DirectLink[] = [];
 
         $ep(".dlink a, a[href*='filesdl']").each((_: any, a: any) => {
-          const href = $(a).attr("href");
-          const title = $(a).text().trim() || "Download";
+          let href = $(a).attr("href");
+          let title = $(a).text().trim() || "Watch";
           if (
             href &&
             href.startsWith("http") &&
@@ -63,6 +63,10 @@ async function parseLinkmakePage(
             !href.includes("t.me") &&
             !title.toLowerCase().includes("telegram")
           ) {
+            if (href.includes("filesdl") && href.includes("/drive/")) {
+              href = href.replace("/drive/", "/cloud/");
+            }
+            title = title.replace(/^download\s+/i, "");
             epDirectLinks.push({
               title,
               link: href,
@@ -84,8 +88,8 @@ async function parseLinkmakePage(
     if (groups.length === 0) {
       const directLinks: DirectLink[] = [];
       $(".dlink a, a[href*='filesdl']").each((_: any, a: any) => {
-        const href = $(a).attr("href");
-        const title = $(a).text().trim() || "Download";
+        let href = $(a).attr("href");
+        let title = $(a).text().trim() || "Watch";
         if (
           href &&
           href.startsWith("http") &&
@@ -93,6 +97,10 @@ async function parseLinkmakePage(
           !href.includes("t.me") &&
           !title.toLowerCase().includes("telegram")
         ) {
+          if (href.includes("filesdl") && href.includes("/drive/")) {
+            href = href.replace("/drive/", "/cloud/");
+          }
+          title = title.replace(/^download\s+/i, "");
           directLinks.push({
             title,
             link: href,

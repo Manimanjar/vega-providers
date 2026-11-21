@@ -1,5 +1,5 @@
 // @vega-provider pornhub
-// @vega-version 2.3.5
+// @vega-version 2.3.6
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -1293,63 +1293,84 @@ async function searchApi(query, page, opts) {
   for (var bi = 0; bi < candidateBases.length; bi++) {
     var curBase = candidateBases[bi];
     var apiUrl = curBase + "/webmasters/search?search=" + encodeURIComponent(query) + "&page=" + Math.max(1, page || 1) + "&thumbsize=medium";
-    try {
-      var res = await axios.get(apiUrl, {
-        timeout: 9e3,
-        headers: Object.assign({}, commonHeaders, {
-          Accept: "application/json",
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          Referer: curBase + "/"
-        }),
-        signal,
-        maxRedirects: 5
-      });
-      if (res.request && res.request.responseURL && opts.kvStore) {
-        try {
-          var u = new URL(res.request.responseURL);
-          var origin = u.origin.replace(/\/+$/, "");
-          if (origin && origin.startsWith("http") && origin !== baseUrl) {
-            opts.kvStore.set("pornhub_learnedDomain", origin);
-          }
-        } catch (e) {
-        }
-      }
-      var data = res.data;
-      if (typeof data === "string") {
-        try {
-          data = JSON.parse(data);
-        } catch (e) {
-          continue;
-        }
-      }
-      var videos = data && data.videos || [];
-      if (!Array.isArray(videos)) continue;
-      var posts = [];
-      var seen = {};
-      for (var i = 0; i < videos.length; i++) {
-        var v = videos[i] || {};
-        var link = v.url || "";
-        if (!link || seen[link]) continue;
-        seen[link] = true;
-        var title = String(v.title || "").trim();
-        if (!title) continue;
-        var image = v.default_thumb || v.thumb || "";
-        var durationSec = parseApiDuration(v.duration);
-        var durationText = formatDuration(durationSec) || v.duration || void 0;
-        posts.push({
-          title,
-          link,
-          image,
-          tag: durationText,
-          _dur: durationSec,
-          cornerTag: durationText
+    for (var retry = 0; retry < 2; retry++) {
+      try {
+        var res = await axios.get(apiUrl, {
+          timeout: 9e3,
+          headers: Object.assign({}, commonHeaders, {
+            Accept: "application/json, text/plain, */*",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Sec-CH-UA": '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
+            "Sec-CH-UA-Mobile": "?0",
+            "Sec-CH-UA-Platform": '"Windows"',
+            Referer: curBase + "/",
+            Cookie: "platform=pc; bs=0"
+          }),
+          signal,
+          maxRedirects: 5
         });
+        if (res.request && res.request.responseURL && opts.kvStore) {
+          try {
+            var u = new URL(res.request.responseURL);
+            var origin = u.origin.replace(/\/+$/, "");
+            if (origin && origin.startsWith("http") && origin !== baseUrl && !origin.includes("pornhub.org")) {
+              opts.kvStore.set("pornhub_learnedDomain", origin);
+            }
+          } catch (e) {
+          }
+        }
+        var data = res.data;
+        if (typeof data === "string") {
+          try {
+            data = JSON.parse(data);
+          } catch (e) {
+            continue;
+          }
+        }
+        var videos = data && data.videos || [];
+        if (!Array.isArray(videos)) continue;
+        var posts = [];
+        var seen = {};
+        for (var i = 0; i < videos.length; i++) {
+          var v = videos[i] || {};
+          var link = v.url || "";
+          if (!link || seen[link]) continue;
+          seen[link] = true;
+          var title = String(v.title || "").trim();
+          if (!title) continue;
+          var image = "";
+          if (v.thumbs && Array.isArray(v.thumbs) && v.thumbs.length > 0) {
+            var fl = v.thumbs.find(function(t) {
+              return t && t.src && t.src.includes("pix-fl");
+            });
+            if (fl && fl.src) image = fl.src;
+          }
+          if (!image) {
+            image = v.default_thumb || v.thumb || "";
+          }
+          var durationSec = parseApiDuration(v.duration);
+          var durationText = formatDuration(durationSec) || v.duration || void 0;
+          posts.push({
+            title,
+            link,
+            image,
+            tag: durationText,
+            _dur: durationSec,
+            cornerTag: durationText
+          });
+        }
+        posts.sort(function(a, b) {
+          return compareTitle(a.title || "", b.title || "");
+        });
+        return posts;
+      } catch (err) {
+        if (retry === 0) {
+          await new Promise(function(r) {
+            setTimeout(r, 250);
+          });
+        }
       }
-      posts.sort(function(a, b) {
-        return compareTitle(a.title || "", b.title || "");
-      });
-      return posts;
-    } catch (err) {
     }
   }
   return [];

@@ -132,43 +132,47 @@ export const getStream = async function ({
   }
 
   const candidateBases = [
-    baseUrl,
     "https://www.pornhub.com",
+    baseUrl,
     "https://www.pornhub.org",
     "https://www.pornhub.net",
   ].filter((b, idx, arr) => arr.indexOf(b) === idx);
 
   for (const curBase of candidateBases) {
     const targetUrl = `${curBase}${pathPart}`;
-    try {
-      const res = await axios.get(targetUrl, {
-        headers: {
-          ...commonHeaders,
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          Accept:
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.9",
-          Referer: `${curBase}/`,
-        },
-        signal,
-        timeout: 10000,
-        maxRedirects: 5,
-      });
+    for (let retry = 0; retry < 2; retry++) {
+      try {
+        const res = await axios.get(targetUrl, {
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            Accept:
+              "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Sec-CH-UA": '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
+            "Sec-CH-UA-Mobile": "?0",
+            "Sec-CH-UA-Platform": '"Windows"',
+            Referer: `${curBase}/`,
+            Cookie: "platform=pc; bs=0",
+          },
+          signal,
+          timeout: 9000,
+          maxRedirects: 5,
+        });
 
-      let effectiveOrigin = curBase;
-      if (res.request && res.request.responseURL) {
-        try {
-          effectiveOrigin = new URL(res.request.responseURL).origin.replace(/\/+$/, "");
-          if (effectiveOrigin && effectiveOrigin.startsWith("http") && kvStore) {
-            kvStore.set("pornhub_learnedDomain", effectiveOrigin);
-          }
-        } catch (e) {}
-      }
+        let effectiveOrigin = curBase;
+        if (res.request && res.request.responseURL) {
+          try {
+            effectiveOrigin = new URL(res.request.responseURL).origin.replace(/\/+$/, "");
+            if (effectiveOrigin && effectiveOrigin.startsWith("http") && kvStore) {
+              kvStore.set("pornhub_learnedDomain", effectiveOrigin);
+            }
+          } catch (e) {}
+        }
 
-      const html = res.data || "";
-      const defs = extractMediaDefinitions(html);
-      if (defs.length === 0) continue;
+        const html = res.data || "";
+        const defs = extractMediaDefinitions(html);
+        if (defs.length === 0) continue;
 
       const streamHeaders = {
         "User-Agent":
@@ -181,7 +185,7 @@ export const getStream = async function ({
       const seen = new Set<string>();
 
       const hlsDefs = defs
-        .filter((d: any) => d && d.format === "hls" && d.videoUrl)
+        .filter((d: any) => d && d.format === "hls" && d.videoUrl && !String(d.videoUrl).includes("hv-h.phncdn.com"))
         .map((d: any) => ({
           quality: String(d.quality || d.height || "1080"),
           height: parseInt(d.height, 10) || parseInt(d.quality, 10) || 0,
@@ -190,7 +194,7 @@ export const getStream = async function ({
         .sort((a, b) => b.height - a.height);
 
       const mp4Defs = defs
-        .filter((d: any) => d && d.format === "mp4" && d.videoUrl)
+        .filter((d: any) => d && d.format === "mp4" && d.videoUrl && !String(d.videoUrl).includes("/video/get_media"))
         .map((d: any) => ({
           quality: String(d.quality || d.height || "720"),
           height: parseInt(d.height, 10) || parseInt(d.quality, 10) || 0,
@@ -232,9 +236,12 @@ export const getStream = async function ({
         return streams;
       }
     } catch (e) {
-      // Try next candidate base
+      if (retry === 0) {
+        await new Promise((r) => setTimeout(r, 250));
+      }
     }
   }
+}
 
   return [];
 };

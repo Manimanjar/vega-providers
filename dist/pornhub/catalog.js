@@ -1,5 +1,5 @@
 // @vega-provider pornhub
-// @vega-version 2.3.5
+// @vega-version 2.3.6
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;

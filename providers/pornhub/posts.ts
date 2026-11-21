@@ -143,67 +143,89 @@ async function searchApi(query, page, opts) {
       Math.max(1, page || 1) +
       "&thumbsize=medium";
 
-    try {
-      var res = await axios.get(apiUrl, {
-        timeout: 9000,
-        headers: Object.assign({}, commonHeaders, {
-          Accept: "application/json",
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          Referer: curBase + "/",
-        }),
-        signal: signal,
-        maxRedirects: 5,
-      });
+    for (var retry = 0; retry < 2; retry++) {
+      try {
+        var res = await axios.get(apiUrl, {
+          timeout: 9000,
+          headers: Object.assign({}, commonHeaders, {
+            Accept: "application/json, text/plain, */*",
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Sec-CH-UA": '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
+            "Sec-CH-UA-Mobile": "?0",
+            "Sec-CH-UA-Platform": '"Windows"',
+            Referer: curBase + "/",
+            Cookie: "platform=pc; bs=0",
+          }),
+          signal: signal,
+          maxRedirects: 5,
+        });
 
-      if (res.request && res.request.responseURL && opts.kvStore) {
-        try {
-          var u = new URL(res.request.responseURL);
-          var origin = u.origin.replace(/\/+$/, "");
-          if (origin && origin.startsWith("http") && origin !== baseUrl) {
-            opts.kvStore.set("pornhub_learnedDomain", origin);
+        if (res.request && res.request.responseURL && opts.kvStore) {
+          try {
+            var u = new URL(res.request.responseURL);
+            var origin = u.origin.replace(/\/+$/, "");
+            if (origin && origin.startsWith("http") && origin !== baseUrl && !origin.includes("pornhub.org")) {
+              opts.kvStore.set("pornhub_learnedDomain", origin);
+            }
+          } catch (e) {}
+        }
+
+        var data = res.data;
+        if (typeof data === "string") {
+          try {
+            data = JSON.parse(data);
+          } catch (e) {
+            continue;
           }
-        } catch (e) {}
-      }
+        }
+        var videos = (data && data.videos) || [];
+        if (!Array.isArray(videos)) continue;
 
-      var data = res.data;
-      if (typeof data === "string") {
-        try {
-          data = JSON.parse(data);
-        } catch (e) {
-          continue;
+        var posts = [];
+        var seen = {};
+        for (var i = 0; i < videos.length; i++) {
+          var v = videos[i] || {};
+          var link = v.url || "";
+          if (!link || seen[link]) continue;
+          seen[link] = true;
+          var title = String(v.title || "").trim();
+          if (!title) continue;
+
+          var image = "";
+          if (v.thumbs && Array.isArray(v.thumbs) && v.thumbs.length > 0) {
+            var fl = v.thumbs.find(function (t: any) {
+              return t && t.src && t.src.includes("pix-fl");
+            });
+            if (fl && fl.src) image = fl.src;
+          }
+          if (!image) {
+            image = v.default_thumb || v.thumb || "";
+          }
+
+          var durationSec = parseApiDuration(v.duration);
+          var durationText = formatDuration(durationSec) || v.duration || undefined;
+          posts.push({
+            title: title,
+            link: link,
+            image: image,
+            tag: durationText,
+            _dur: durationSec,
+            cornerTag: durationText,
+          });
+        }
+        posts.sort(function (a, b) {
+          return compareTitle(a.title || "", b.title || "");
+        });
+        return posts;
+      } catch (err) {
+        if (retry === 0) {
+          await new Promise(function (r) {
+            setTimeout(r, 250);
+          });
         }
       }
-      var videos = (data && data.videos) || [];
-      if (!Array.isArray(videos)) continue;
-
-      var posts = [];
-      var seen = {};
-      for (var i = 0; i < videos.length; i++) {
-        var v = videos[i] || {};
-        var link = v.url || "";
-        if (!link || seen[link]) continue;
-        seen[link] = true;
-        var title = String(v.title || "").trim();
-        if (!title) continue;
-        var image = v.default_thumb || v.thumb || "";
-        var durationSec = parseApiDuration(v.duration);
-        var durationText = formatDuration(durationSec) || v.duration || undefined;
-        posts.push({
-          title: title,
-          link: link,
-          image: image,
-          tag: durationText,
-          _dur: durationSec,
-          cornerTag: durationText,
-        });
-      }
-      posts.sort(function (a, b) {
-        return compareTitle(a.title || "", b.title || "");
-      });
-      return posts;
-    } catch (err) {
-      // try next candidate base
     }
   }
   return [];

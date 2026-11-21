@@ -1,5 +1,5 @@
 // @vega-provider pornhub
-// @vega-version 2.3.5
+// @vega-version 2.3.6
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -141,86 +141,94 @@ var getStream = async function({
     pathPart = "/" + pathPart;
   }
   const candidateBases = [
-    baseUrl,
     "https://www.pornhub.com",
+    baseUrl,
     "https://www.pornhub.org",
     "https://www.pornhub.net"
   ].filter((b, idx, arr) => arr.indexOf(b) === idx);
   for (const curBase of candidateBases) {
     const targetUrl = `${curBase}${pathPart}`;
-    try {
-      const res = await axios.get(targetUrl, {
-        headers: {
-          ...commonHeaders,
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.9",
-          Referer: `${curBase}/`
-        },
-        signal,
-        timeout: 1e4,
-        maxRedirects: 5
-      });
-      let effectiveOrigin = curBase;
-      if (res.request && res.request.responseURL) {
-        try {
-          effectiveOrigin = new URL(res.request.responseURL).origin.replace(/\/+$/, "");
-          if (effectiveOrigin && effectiveOrigin.startsWith("http") && kvStore) {
-            kvStore.set("pornhub_learnedDomain", effectiveOrigin);
+    for (let retry = 0; retry < 2; retry++) {
+      try {
+        const res = await axios.get(targetUrl, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Sec-CH-UA": '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
+            "Sec-CH-UA-Mobile": "?0",
+            "Sec-CH-UA-Platform": '"Windows"',
+            Referer: `${curBase}/`,
+            Cookie: "platform=pc; bs=0"
+          },
+          signal,
+          timeout: 9e3,
+          maxRedirects: 5
+        });
+        let effectiveOrigin = curBase;
+        if (res.request && res.request.responseURL) {
+          try {
+            effectiveOrigin = new URL(res.request.responseURL).origin.replace(/\/+$/, "");
+            if (effectiveOrigin && effectiveOrigin.startsWith("http") && kvStore) {
+              kvStore.set("pornhub_learnedDomain", effectiveOrigin);
+            }
+          } catch (e) {
           }
-        } catch (e) {
+        }
+        const html = res.data || "";
+        const defs = extractMediaDefinitions(html);
+        if (defs.length === 0) continue;
+        const streamHeaders = {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Referer: `${effectiveOrigin}/`,
+          Origin: effectiveOrigin
+        };
+        const streams = [];
+        const seen = /* @__PURE__ */ new Set();
+        const hlsDefs = defs.filter((d) => d && d.format === "hls" && d.videoUrl && !String(d.videoUrl).includes("hv-h.phncdn.com")).map((d) => ({
+          quality: String(d.quality || d.height || "1080"),
+          height: parseInt(d.height, 10) || parseInt(d.quality, 10) || 0,
+          url: String(d.videoUrl).replace(/\\\//g, "/").replace(/&amp;/g, "&")
+        })).sort((a, b) => b.height - a.height);
+        const mp4Defs = defs.filter((d) => d && d.format === "mp4" && d.videoUrl && !String(d.videoUrl).includes("/video/get_media")).map((d) => ({
+          quality: String(d.quality || d.height || "720"),
+          height: parseInt(d.height, 10) || parseInt(d.quality, 10) || 0,
+          url: String(d.videoUrl).replace(/\\\//g, "/").replace(/&amp;/g, "&")
+        })).sort((a, b) => b.height - a.height);
+        const pushStream = (server, url, streamType, q) => {
+          if (!url || seen.has(url)) return;
+          seen.add(url);
+          streams.push({
+            server,
+            link: url,
+            type: streamType,
+            quality: q,
+            headers: streamHeaders
+          });
+        };
+        if (isDownload) {
+          mp4Defs.forEach((v) => {
+            pushStream(`Direct MP4 ${v.quality}p`, v.url, "mp4", v.quality);
+          });
+          hlsDefs.forEach((v) => {
+            pushStream(`HLS ${v.quality}p`, v.url, "m3u8", v.quality);
+          });
+        } else {
+          hlsDefs.forEach((v) => {
+            pushStream(`HLS ${v.quality}p`, v.url, "m3u8", v.quality);
+          });
+          mp4Defs.forEach((v) => {
+            pushStream(`Direct MP4 ${v.quality}p`, v.url, "mp4", v.quality);
+          });
+        }
+        if (streams.length > 0) {
+          return streams;
+        }
+      } catch (e) {
+        if (retry === 0) {
+          await new Promise((r) => setTimeout(r, 250));
         }
       }
-      const html = res.data || "";
-      const defs = extractMediaDefinitions(html);
-      if (defs.length === 0) continue;
-      const streamHeaders = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Referer: `${effectiveOrigin}/`,
-        Origin: effectiveOrigin
-      };
-      const streams = [];
-      const seen = /* @__PURE__ */ new Set();
-      const hlsDefs = defs.filter((d) => d && d.format === "hls" && d.videoUrl).map((d) => ({
-        quality: String(d.quality || d.height || "1080"),
-        height: parseInt(d.height, 10) || parseInt(d.quality, 10) || 0,
-        url: String(d.videoUrl).replace(/\\\//g, "/").replace(/&amp;/g, "&")
-      })).sort((a, b) => b.height - a.height);
-      const mp4Defs = defs.filter((d) => d && d.format === "mp4" && d.videoUrl).map((d) => ({
-        quality: String(d.quality || d.height || "720"),
-        height: parseInt(d.height, 10) || parseInt(d.quality, 10) || 0,
-        url: String(d.videoUrl).replace(/\\\//g, "/").replace(/&amp;/g, "&")
-      })).sort((a, b) => b.height - a.height);
-      const pushStream = (server, url, streamType, q) => {
-        if (!url || seen.has(url)) return;
-        seen.add(url);
-        streams.push({
-          server,
-          link: url,
-          type: streamType,
-          quality: q,
-          headers: streamHeaders
-        });
-      };
-      if (isDownload) {
-        mp4Defs.forEach((v) => {
-          pushStream(`Direct MP4 ${v.quality}p`, v.url, "mp4", v.quality);
-        });
-        hlsDefs.forEach((v) => {
-          pushStream(`HLS ${v.quality}p`, v.url, "m3u8", v.quality);
-        });
-      } else {
-        hlsDefs.forEach((v) => {
-          pushStream(`HLS ${v.quality}p`, v.url, "m3u8", v.quality);
-        });
-        mp4Defs.forEach((v) => {
-          pushStream(`Direct MP4 ${v.quality}p`, v.url, "mp4", v.quality);
-        });
-      }
-      if (streams.length > 0) {
-        return streams;
-      }
-    } catch (e) {
     }
   }
   return [];
