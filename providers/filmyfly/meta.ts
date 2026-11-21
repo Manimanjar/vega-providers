@@ -1,5 +1,6 @@
 import { Info, LinkListGroup, DirectLink, ProviderContext } from "../types";
 import { getBaseUrl, recordRedirect } from "./domain";
+import { upgradeImageUrl } from "./posts";
 
 "use strict";
 
@@ -159,11 +160,11 @@ export const getMeta = async function ({
       $("title").text().replace(/»\s*FilmyFly.*/i, "").trim() ||
       "Movie";
 
-    let image =
+    let rawImage =
       $('meta[property="og:image"]').attr("content") ||
       $(".movie-cover").attr("src") ||
       "";
-    if (image.startsWith("//")) image = "https:" + image;
+    let image = upgradeImageUrl(rawImage);
 
     const synopsis =
       $(".movie-info .fname:contains('Description') span").text().trim() ||

@@ -24,6 +24,15 @@ function slug(title: string): string {
   return s !== "" ? s : "item";
 }
 
+export function upgradeImageUrl(url: string): string {
+  if (!url) return "";
+  let clean = url;
+  if (clean.startsWith("//")) clean = "https:" + clean;
+  // Upgrade low-res thumbnail paths (e.g. 60-65-2x) to HD poster paths (280-380-3x)
+  clean = clean.replace(/\/webp\/\d+-\d+-[12]x-/, "/webp/280-380-3x-");
+  return clean;
+}
+
 function parseCards($, containerSelector: string, baseUrl: string): Post[] {
   const posts: Post[] = [];
   const seen = new Set<string>();
@@ -43,8 +52,7 @@ function parseCards($, containerSelector: string, baseUrl: string): Post[] {
     seen.add(link);
 
     const imgEl = $el.find("img.row-thumb").first();
-    let image = imgEl.attr("src") || "";
-    if (image.startsWith("//")) image = "https:" + image;
+    let image = upgradeImageUrl(imgEl.attr("src") || "");
 
     let title =
       $el.find(".row-title").first().text().trim() ||
@@ -199,8 +207,7 @@ export const getSearchPosts = async function ({
           item.filmyfly || ""
         )}/${encodeURIComponent(itemSlug)}.html`;
 
-        let image = item.poster || "";
-        if (image.startsWith("//")) image = "https:" + image;
+        let image = upgradeImageUrl(item.poster || "");
 
         return {
           title: item.title || "Untitled",
