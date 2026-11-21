@@ -20,7 +20,7 @@
     {
         "display_name": "PornHub",
         "value": "pornhub",
-        "version": "2.3.6",
+        "version": "2.3.7",
         "icon": "https://www.pornhub.com/favicon.ico",
         "type": "global",
         "disabled": false,
@@ -29,7 +29,7 @@
     {
         "display_name": "FilmyFly",
         "value": "filmyfly",
-        "version": "1.0.1",
+        "version": "1.0.2",
         "icon": "https://img.iwebp.store/images/files/afaa901b76bc48d57a346319423035dd384208.png",
         "type": "global",
         "disabled": false,
