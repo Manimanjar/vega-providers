@@ -134,6 +134,8 @@ export const getStream = async function ({
   const candidateBases = [
     "https://www.pornhub.com",
     baseUrl,
+    "https://rt.pornhub.com",
+    "https://de.pornhub.com",
     "https://www.pornhub.org",
     "https://www.pornhub.net",
   ].filter((b, idx, arr) => arr.indexOf(b) === idx);
