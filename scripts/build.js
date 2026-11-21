@@ -4,8 +4,14 @@ const esbuild = require("esbuild");
 
 const providersDir = path.join(__dirname, "..", "providers");
 const outputDir = path.join(__dirname, "..", "dist");
+const manifestPath = path.join(__dirname, "..", "manifest.json");
 
 async function main() {
+  let manifest = [];
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  } catch (e) {}
+
   const providerDirs = fs
     .readdirSync(providersDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory());
@@ -13,6 +19,9 @@ async function main() {
   for (const providerDir of providerDirs) {
     const sourceDir = path.join(providersDir, providerDir.name);
     const files = fs.readdirSync(sourceDir).filter((file) => file.endsWith(".ts"));
+    const manifestEntry = manifest.find((p) => p.value === providerDir.name);
+    const version = manifestEntry ? manifestEntry.version : "1.0.0";
+    const banner = `// @vega-provider ${providerDir.name}\n// @vega-version ${version}\n"use strict";`;
 
     for (const file of files) {
       await esbuild.build({
@@ -28,6 +37,9 @@ async function main() {
         format: "cjs",
         platform: "browser",
         target: "es2020",
+        banner: {
+          js: banner,
+        },
       });
     }
   }

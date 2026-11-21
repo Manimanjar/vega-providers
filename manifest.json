@@ -25,5 +25,14 @@
         "type": "global",
         "disabled": false,
         "hasSettings": true
+    },
+    {
+        "display_name": "FilmyFly",
+        "value": "filmyfly",
+        "version": "1.0.0",
+        "icon": "https://img.iwebp.store/images/files/afaa901b76bc48d57a346319423035dd384208.png",
+        "type": "global",
+        "disabled": false,
+        "hasSettings": true
     }
 ]

@@ -21,5 +21,17 @@
     "mirrors": [
       "https://www.pornhub.com"
     ]
+  },
+  "filmyfly": {
+    "name": "FilmyFly",
+    "url": "https://filmyfly.kred",
+    "mirrors": [
+      "https://filmyfly.kred",
+      "https://filmyfly.info",
+      "https://filmyfly.net",
+      "https://filmyfly.ca",
+      "https://filmyfly.ee",
+      "https://filmyfly.io"
+    ]
   }
 }
