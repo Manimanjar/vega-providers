@@ -53,6 +53,7 @@ async function runTests() {
     if (posts.length > 0) {
       assert(!!posts[0].title, `First post has title: ${posts[0].title}`);
       assert(!!posts[0].link && posts[0].link.startsWith("http"), `First post has valid link: ${posts[0].link}`);
+      assert(!posts[0].image.includes("60-65"), `First post has upgraded HD image: ${posts[0].image}`);
       ffSampleLink = posts[0].link;
     }
   } catch (e) {
@@ -191,6 +192,10 @@ async function runTests() {
       assert(meta.type === "movie", `PornHub getMeta has type: '${meta.type}'`);
       assert(!!meta.poster || !!meta.image, `PornHub getMeta has poster/image populated`);
       assert(!!meta.synopsis, `PornHub getMeta has synopsis populated`);
+      assert(meta.rating === undefined || typeof meta.rating === "string", `PornHub getMeta rating is string or undefined (got ${typeof meta.rating})`);
+      if (meta.rating) {
+        assert(typeof meta.rating.replace === "function", `PornHub rating '${meta.rating}' is string safe for ContentOverview.replace`);
+      }
       assert(Array.isArray(meta.linkList) && meta.linkList.length > 0, `PornHub getMeta populated linkList (${meta.linkList?.length} groups)`);
 
       if (meta.linkList && meta.linkList.length > 0) {

@@ -41,40 +41,80 @@ async function extractFromFilesdl(
 
     const titleText = $(".title").first().text().trim() || "";
     const defaultQuality = extractQuality(titleText);
+    const q = defaultQuality !== "auto" ? defaultQuality : "1080";
 
-    // 1. Cloud Direct (.r2.dev direct high-speed video streaming)
+    // 1. Direct Download 10Gbps (Google Drive CDN via fffast / zdownload.php)
+    const fffastLink = $("a[href*='zdownload.php'], a[href*='fffast']").first().attr("href");
+    if (fffastLink && fffastLink.startsWith("http")) {
+      const cleanFffast = fffastLink.replace(/&amp;/g, "&");
+      try {
+        const redRes = await axios.get(cleanFffast, {
+          headers: { "User-Agent": USER_AGENT, Referer: targetUrl },
+          maxRedirects: 0,
+          validateStatus: (s: number) => s >= 200 && s < 400,
+          timeout: 4000,
+        });
+        const location = redRes.headers.location;
+        if (location && location.startsWith("http")) {
+          seen.add(location);
+          streams.push({
+            server: `Google Direct Fast Stream (10Gbps) [${q}p]`,
+            link: location,
+            type: "mp4",
+            quality: q,
+            headers: { "User-Agent": USER_AGENT },
+          });
+        }
+      } catch (e) {
+        if (!seen.has(cleanFffast)) {
+          seen.add(cleanFffast);
+          streams.push({
+            server: `Fast Direct Stream (10Gbps) [${q}p]`,
+            link: cleanFffast,
+            type: "mp4",
+            quality: q,
+            headers: { "User-Agent": USER_AGENT, Referer: targetUrl },
+          });
+        }
+      }
+    }
+
+    // 2. Cloud Direct (.r2.dev direct high-speed video streaming)
     $("a[href*='.r2.dev']").each((_: any, el: any) => {
       let href = $(el).attr("href");
-      if (!href || seen.has(href)) return;
+      if (!href || href.includes("t.me") || href.includes("telegram")) return;
       if (!href.startsWith("http")) return;
-      if (href.includes("t.me") || href.includes("telegram")) return;
+      href = href.replace(/&amp;/g, "&");
 
       // Add token if needed as per filesdl client script
-      if (href.includes(".r2.dev") && !href.includes("&token=")) {
+      if (!href.includes("token=")) {
         const randToken = Math.floor(1000000000 + Math.random() * 9000000000);
-        href = `${href}&token=${randToken}`;
+        href = `${href}${href.includes("?") ? "&" : "?"}token=${randToken}`;
       }
 
-      seen.add(href);
-      const text = $(el).text().trim() || titleText;
-      const q = extractQuality(text) !== "auto" ? extractQuality(text) : defaultQuality;
+      if (!seen.has(href)) {
+        seen.add(href);
+        const text = $(el).text().trim() || titleText;
+        const itemQ = extractQuality(text) !== "auto" ? extractQuality(text) : q;
 
-      streams.push({
-        server: `Cloud Direct (High Speed) [${q !== "auto" ? q : "1080"}p]`,
-        link: href,
-        type: "mp4",
-        quality: q !== "auto" ? q : "1080",
-        headers: {
-          "User-Agent": USER_AGENT,
-          Referer: targetUrl,
-        },
-      });
+        streams.push({
+          server: `Cloud Direct (High Speed) [${itemQ}p]`,
+          link: href,
+          type: "mp4",
+          quality: itemQ,
+          headers: {
+            "User-Agent": USER_AGENT,
+            Referer: targetUrl,
+          },
+        });
+      }
     });
 
-    // 2. Pixeldrain Direct API (Directly streamable via /api/file/<id> with byte-range support)
+    // 3. Pixeldrain Direct API (Directly streamable via /api/file/<id> with byte-range support)
     $("a[href*='pixeldrain.com/u/'], a[href*='iwebp.store/u/']").each((_: any, el: any) => {
-      const href = $(el).attr("href");
+      let href = $(el).attr("href");
       if (!href) return;
+      href = href.replace(/&amp;/g, "&");
       const match = href.match(/\/u\/([a-zA-Z0-9]+)/);
       if (match) {
         const pid = match[1];
@@ -82,7 +122,6 @@ async function extractFromFilesdl(
         const streamUrl = `https://pixeldrain.com/api/file/${pid}`;
         if (!seen.has(streamUrl)) {
           seen.add(streamUrl);
-          const q = defaultQuality !== "auto" ? defaultQuality : "1080";
           streams.push({
             server: `Pixeldrain Fast Stream [${q}p]`,
             link: streamUrl,
@@ -94,12 +133,12 @@ async function extractFromFilesdl(
       }
     });
 
-    // 3. Fallback: Any direct media URL in raw HTML
+    // 4. Fallback: Any direct media URL in raw HTML
     if (streams.length === 0) {
       const mediaRe = /https?:\/\/[^"'\s<>]+\.(?:mp4|mkv|m3u8)[^"'\s<>]*/gi;
       let m: RegExpExecArray | null;
       while ((m = mediaRe.exec(html)) !== null) {
-        const u = m[0];
+        const u = m[0].replace(/&amp;/g, "&");
         if (!seen.has(u)) {
           seen.add(u);
           const isHls = u.includes(".m3u8");
@@ -107,7 +146,7 @@ async function extractFromFilesdl(
             server: isHls ? "Direct HLS Stream" : "Direct Video Stream",
             link: u,
             type: isHls ? "m3u8" : "mp4",
-            quality: defaultQuality,
+            quality: q,
             headers: { "User-Agent": USER_AGENT, Referer: targetUrl },
           });
         }
