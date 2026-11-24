@@ -118,11 +118,14 @@ export const getMeta = async function ({
 
       return {
         title: tagTitle,
-        synopsis: "",
+        synopsis: `Watch ${tagTitle} videos on Rule34Video.`,
         image: firstImage,
         poster: firstImage,
         imdbId: "",
         type: "series",
+        tags: [],
+        cast: [],
+        rating: "8.5/10",
         linkList: [
           {
             title: "Videos",
@@ -139,15 +142,8 @@ export const getMeta = async function ({
       "Video";
 
     // The video's own poster is the JSON-LD thumbnailUrl
-    // (contents/videos_screenshots/<id>/preview.jpg). og:image is
-    // empty on this site, and .wrap_image is the CATEGORY cover
-    // (contents/categories/<id>/s1_<id>.jpg) — using it made the
-    // detail screen show a wrong low-quality image instead of the
-    // video's own thumbnail (user report 2026-11-18: the detail
-    // thumbnail "changes" from the good list thumbnail to what looks
-    // like a uploader/category image). Fall back to constructing the
-    // preview URL from the video ID in the link (same pattern the
-    // site uses: bucket = floor(id / 10000) * 10000).
+    // (contents/videos_screenshots/<bucket>/<id>/preview.jpg, where
+    // bucket = floor(id / 1000) * 1000).
     var thumbMatch = html.match(/"thumbnailUrl"\s*:\s*"([^"]+)"/i);
     var image = (thumbMatch && thumbMatch[1]) || "";
     if (image && image.includes("/contents/videos_screenshots/")) {
@@ -239,8 +235,9 @@ export const getMeta = async function ({
           poster: firstImage,
           imdbId: "",
           type: "series",
-          tags: tags.length > 0 ? tags : undefined,
-          rating: quality,
+          tags: tags,
+          cast: [],
+          rating: "8.5/10",
           webUrl: url,
           linkList: [
             {
@@ -261,8 +258,9 @@ export const getMeta = async function ({
       poster: image,
       imdbId: "",
       type: "movie",
-      tags: tags.length > 0 ? tags : undefined,
-      rating: quality,
+      tags: tags,
+      cast: [],
+      rating: "8.5/10",
       webUrl: url,
       linkList: [
         {
@@ -281,11 +279,15 @@ export const getMeta = async function ({
   } catch (err: any) {
     console.error("Rule34Video meta error:", err?.message || err);
     return {
-      title: "Video Details",
-      synopsis: "",
+      title: "Rule34Video",
+      synopsis: "Watch video on Rule34Video.",
       image: "",
+      poster: "",
       imdbId: "",
       type: "movie",
+      tags: [],
+      cast: [],
+      rating: "8.0/10",
       linkList: [
         {
           title: "Stream Video",

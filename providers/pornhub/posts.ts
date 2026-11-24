@@ -54,18 +54,19 @@ export function upgradePornhubImageUrl(url: string): string {
     return "https://ei.phncdn.com" + origMatch[1];
   }
 
-  // 2. If it's already on unblocked Fastly (pix-fl) or Edgecast (pix-egi, ei), preserve the valid signed URL as-is!
+  // 2. If it's already on unblocked Fastly (pix-fl) with a valid token or Edgecast (pix-egi, ei), preserve it!
   // NEVER rewrite signed vts frames to ei.phncdn.com (doing so causes HTTP 410 Gone).
   if (
-    cleanUrl.includes("pix-fl.phncdn.com") ||
     cleanUrl.includes("pix-egi.phncdn.com") ||
-    cleanUrl.includes("ei.phncdn.com")
+    cleanUrl.includes("ei.phncdn.com") ||
+    (cleanUrl.includes("pix-fl.phncdn.com") && cleanUrl.includes("hdnea="))
   ) {
     return cleanUrl;
   }
 
-  // 3. If it's on blocked pix-cdn77, replace with pix-fl so it routes through Fastly rather than timing out.
-  if (cleanUrl.includes("pix-cdn77.phncdn.com")) {
+  // 3. Only rewrite pix-cdn77 -> pix-fl if it already carries an hdnea token;
+  // untokenized pix-cdn77 URLs return HTTP 470 on pix-fl and must be resolved via video_by_id.
+  if (cleanUrl.includes("pix-cdn77.phncdn.com") && cleanUrl.includes("hdnea=")) {
     return cleanUrl.replace("pix-cdn77.phncdn.com", "pix-fl.phncdn.com");
   }
 
@@ -125,15 +126,33 @@ async function getBase(kvStore, axios) {
     }
   }
 
+  if (kvStore && typeof kvStore.get === "function") {
+    try {
+      var cachedRaw = await kvStore.get(BASE_CACHE_KEY);
+      if (cachedRaw) {
+        var cached = typeof cachedRaw === "string" ? JSON.parse(cachedRaw) : cachedRaw;
+        if (cached && cached.url && cached.expiresAt > now) {
+          return String(cached.url).replace(/\/+$/, "");
+        }
+      }
+    } catch (e) {}
+  }
+
   if (axios) {
     try {
-      var res = await axios.get(URLS_ENDPOINT, { timeout: 4000 });
+      var res = await axios.get(URLS_ENDPOINT, { timeout: 2500 });
       if (res.data && typeof res.data === "object") {
         memoryCache.data = res.data;
         memoryCache.expiresAt = now + 3600000;
         var entry = res.data["pornhub"];
         if (entry && entry.url) {
-          return entry.url.replace(/\/+$/, "");
+          var cleanUrl = entry.url.replace(/\/+$/, "");
+          if (kvStore && typeof kvStore.set === "function") {
+            try {
+              await kvStore.set(BASE_CACHE_KEY, JSON.stringify({ url: cleanUrl, expiresAt: now + 3600000 }));
+            } catch (e) {}
+          }
+          return cleanUrl;
         }
       }
     } catch (e) {}
@@ -265,9 +284,9 @@ async function searchApi(query, page, opts) {
                 var up2 = upgradePornhubImageUrl(cand2);
                 if (
                   up2 &&
-                  (up2.includes("pix-fl.phncdn.com") ||
+                  (up2.includes("ei.phncdn.com") ||
                     up2.includes("pix-egi.phncdn.com") ||
-                    up2.includes("ei.phncdn.com"))
+                    (up2.includes("pix-fl.phncdn.com") && up2.includes("hdnea=")))
                 ) {
                   image = up2;
                   break;
@@ -309,7 +328,7 @@ async function searchApi(query, page, opts) {
         }
         if (cdn77NeedsFix.length > 0) {
           await Promise.all(
-            cdn77NeedsFix.slice(0, 10).map(async function (item) {
+            cdn77NeedsFix.slice(0, 30).map(async function (item) {
               try {
                 var fixUrl =
                   "https://de.pornhub.com/webmasters/video_by_id?id=" +
@@ -563,15 +582,19 @@ const getPostsImpl = async function (params) {
       }
       if (distinctQueries.length === 0) return [];
 
-      var startIdx = (pageIndex * 3) % distinctQueries.length;
-      var selected = distinctQueries.slice(startIdx, startIdx + 3);
-      if (selected.length < 3 && distinctQueries.length > selected.length) {
-        selected = selected.concat(distinctQueries.slice(0, 3 - selected.length));
+      var batchSize = 3;
+      var numBatches = Math.max(1, Math.ceil(distinctQueries.length / batchSize));
+      var batchIdx = pageIndex % numBatches;
+      var sitePage = Math.floor(pageIndex / numBatches) + 1;
+      var startIdx = batchIdx * batchSize;
+      var selected = distinctQueries.slice(startIdx, startIdx + batchSize);
+      if (selected.length < batchSize && distinctQueries.length > selected.length) {
+        selected = selected.concat(distinctQueries.slice(0, batchSize - selected.length));
       }
 
       var groups = await Promise.all(
         selected.map(function (term) {
-          return searchApi(term, pageIndex + 1, apiOpts);
+          return searchApi(term, sitePage, apiOpts);
         })
       );
 

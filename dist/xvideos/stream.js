@@ -1,5 +1,5 @@
 // @vega-provider xvideos
-// @vega-version 2.4.0
+// @vega-version 2.4.1
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -27,6 +27,7 @@ __export(stream_exports, {
 module.exports = __toCommonJS(stream_exports);
 var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
 var DEFAULT_BASE_URL = "https://www.xvideos.com";
+var BASE_CACHE_KEY = "xvideos_baseUrlCacheV1";
 var memoryCache = { data: null, expiresAt: 0 };
 async function getBase(kvStore, axios) {
   if (kvStore && typeof kvStore.get === "function") {
@@ -48,15 +49,37 @@ async function getBase(kvStore, axios) {
       return cachedEntry.url.replace(/\/+$/, "");
     }
   }
+  if (kvStore && typeof kvStore.get === "function") {
+    try {
+      const cachedRaw = await kvStore.get(BASE_CACHE_KEY);
+      if (cachedRaw) {
+        const cached = typeof cachedRaw === "string" ? JSON.parse(cachedRaw) : cachedRaw;
+        if (cached && cached.url && cached.expiresAt > now) {
+          return String(cached.url).replace(/\/+$/, "");
+        }
+      }
+    } catch (e) {
+    }
+  }
   if (axios) {
     try {
-      const res = await axios.get(URLS_ENDPOINT, { timeout: 4e3 });
+      const res = await axios.get(URLS_ENDPOINT, { timeout: 3e3 });
       if (res.data && typeof res.data === "object") {
         memoryCache.data = res.data;
         memoryCache.expiresAt = now + 36e5;
         const entry = res.data["xvideos"];
         if (entry && entry.url) {
-          return entry.url.replace(/\/+$/, "");
+          const cleanEntry = entry.url.replace(/\/+$/, "");
+          if (kvStore && typeof kvStore.set === "function") {
+            try {
+              await kvStore.set(
+                BASE_CACHE_KEY,
+                JSON.stringify({ url: cleanEntry, expiresAt: now + 36e5 })
+              );
+            } catch (e) {
+            }
+          }
+          return cleanEntry;
         }
       }
     } catch (e) {
@@ -82,22 +105,63 @@ var getStream = async function({
 }) {
   const { axios, commonHeaders, kvStore } = providerContext;
   const baseUrl = await getBase(kvStore, axios);
-  const videoPageUrl = link.startsWith("http") ? link : `${baseUrl}${link.startsWith("/") ? "" : "/"}${link}`;
-  const pageHeaders = {
-    ...commonHeaders,
-    Referer: baseUrl,
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-  };
+  let pathPart = link || "";
+  if (pathPart.startsWith("http")) {
+    try {
+      const parsed = new URL(pathPart);
+      pathPart = parsed.pathname + parsed.search;
+    } catch (e) {
+    }
+  }
+  if (!pathPart.startsWith("/")) {
+    pathPart = "/" + pathPart;
+  }
+  const candidateBases = [
+    baseUrl,
+    "https://www.xvideos.com",
+    "https://www.xvideos3.com",
+    "https://www.xvideos2.com"
+  ].filter((b, idx, arr) => b && arr.indexOf(b) === idx);
+  const ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
   const streamHeaders = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    "User-Agent": ua
   };
   try {
-    const res = await axios.get(videoPageUrl, {
-      headers: pageHeaders,
-      signal,
-      maxRedirects: 5
-    });
-    const html = res.data;
+    let html = "";
+    let workingBase = baseUrl;
+    for (const curBase of candidateBases) {
+      const targetUrl = `${curBase}${pathPart}`;
+      for (let retry = 0; retry < 2; retry++) {
+        try {
+          const res = await axios.get(targetUrl, {
+            headers: {
+              ...commonHeaders,
+              Referer: `${curBase}/`,
+              "User-Agent": ua
+            },
+            signal,
+            timeout: 8e3,
+            maxRedirects: 5
+          });
+          if (typeof res.data === "string" && res.data.includes("html5player")) {
+            html = res.data;
+            workingBase = curBase;
+            break;
+          }
+        } catch (e) {
+          if (retry === 0) {
+            await new Promise((r) => setTimeout(r, 250));
+          }
+        }
+      }
+      if (html) break;
+    }
+    if (!html) return [];
+    const pageHeaders = {
+      ...commonHeaders,
+      Referer: `${workingBase}/`,
+      "User-Agent": ua
+    };
     const streams = [];
     const highMatch = html.match(
       /html5player\.setVideoUrlHigh\s*\(\s*['"]([^'"]+)['"]\s*\)/i
@@ -112,61 +176,68 @@ var getStream = async function({
     const hlsVariants = [];
     if (hlsMatch && hlsMatch[1]) {
       const rawHlsUrl = hlsMatch[1];
-      masterHlsUrl = rawHlsUrl.replace(/\/hls_low\.m3u8/i, "/hls.m3u8");
-      const baseUrlDir = masterHlsUrl.substring(
-        0,
-        masterHlsUrl.lastIndexOf("/") + 1
-      );
-      try {
-        const hlsRes = await axios.get(masterHlsUrl, {
-          headers: pageHeaders,
-          timeout: 5e3,
-          signal
-        });
-        const playlist = hlsRes.data;
-        if (typeof playlist === "string" && playlist.includes("#EXTM3U")) {
-          const lines = playlist.split(/\r?\n/);
-          const variants = [];
-          for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            if (line.startsWith("#EXT-X-STREAM-INF:")) {
-              const nextLine = lines[i + 1]?.trim();
-              if (nextLine && !nextLine.startsWith("#")) {
-                const subUrl = nextLine.startsWith("http") ? nextLine : `${baseUrlDir}${nextLine}`;
-                const nameMatch = line.match(/NAME="([^"]+)"/i);
-                const resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/i);
-                const bwMatch = line.match(/BANDWIDTH=(\d+)/i);
-                const height = resMatch ? resMatch[2] : "";
-                const qualityName = nameMatch ? nameMatch[1] : height ? `${height}p` : "HD";
-                const qualNumber = qualityName.replace(/[^0-9]/g, "");
-                const bandwidth = bwMatch ? parseInt(bwMatch[1], 10) : 0;
-                variants.push({
-                  name: qualityName,
-                  url: subUrl,
-                  quality: qualNumber || "1080",
-                  bandwidth
-                });
-              }
+      const upgradedHlsUrl = rawHlsUrl.replace(/\/hls_low\.m3u8/i, "/hls.m3u8");
+      masterHlsUrl = upgradedHlsUrl;
+      let playlist = null;
+      for (const tryUrl of [upgradedHlsUrl, rawHlsUrl].filter((u, i, a) => u && a.indexOf(u) === i)) {
+        try {
+          const hlsRes = await axios.get(tryUrl, {
+            headers: pageHeaders,
+            timeout: 5e3,
+            signal
+          });
+          if (typeof hlsRes.data === "string" && hlsRes.data.includes("#EXTM3U")) {
+            playlist = hlsRes.data;
+            masterHlsUrl = tryUrl;
+            break;
+          }
+        } catch (e) {
+        }
+      }
+      if (playlist) {
+        const baseUrlDir = masterHlsUrl.substring(
+          0,
+          masterHlsUrl.lastIndexOf("/") + 1
+        );
+        const lines = playlist.split(/\r?\n/);
+        const variants = [];
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          if (line.startsWith("#EXT-X-STREAM-INF:")) {
+            const nextLine = lines[i + 1]?.trim();
+            if (nextLine && !nextLine.startsWith("#")) {
+              const subUrl = nextLine.startsWith("http") ? nextLine : `${baseUrlDir}${nextLine}`;
+              const nameMatch = line.match(/NAME="([^"]+)"/i);
+              const resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/i);
+              const bwMatch = line.match(/BANDWIDTH=(\d+)/i);
+              const height = resMatch ? resMatch[2] : "";
+              const qualityName = nameMatch ? nameMatch[1] : height ? `${height}p` : "HD";
+              const qualNumber = qualityName.replace(/[^0-9]/g, "");
+              const bandwidth = bwMatch ? parseInt(bwMatch[1], 10) : 0;
+              variants.push({
+                name: qualityName,
+                url: subUrl,
+                quality: qualNumber || "1080",
+                bandwidth
+              });
             }
           }
-          variants.sort((a, b) => b.bandwidth - a.bandwidth);
-          for (const v of variants) {
-            let label = `Direct ${v.name} (HLS Full Bitrate)`;
-            if (v.quality === "2160") label = "Direct 4K Ultra HD (HLS)";
-            else if (v.quality === "1440") label = "Direct 2K QHD (HLS)";
-            else if (v.quality === "1080") label = "Direct 1080p Full HD (HLS)";
-            else if (v.quality === "720") label = "Direct 720p HD (HLS)";
-            hlsVariants.push({
-              server: label,
-              link: v.url,
-              type: "m3u8",
-              quality: v.quality,
-              headers: streamHeaders
-            });
-          }
         }
-      } catch (err) {
-        console.error("Master HLS fetch error:", err?.message || err);
+        variants.sort((a, b) => b.bandwidth - a.bandwidth);
+        for (const v of variants) {
+          let label = `Direct ${v.name} (HLS Full Bitrate)`;
+          if (v.quality === "2160") label = "Direct 4K Ultra HD (HLS)";
+          else if (v.quality === "1440") label = "Direct 2K QHD (HLS)";
+          else if (v.quality === "1080") label = "Direct 1080p Full HD (HLS)";
+          else if (v.quality === "720") label = "Direct 720p HD (HLS)";
+          hlsVariants.push({
+            server: label,
+            link: v.url,
+            type: "m3u8",
+            quality: v.quality,
+            headers: streamHeaders
+          });
+        }
       }
     }
     if (isDownload) {

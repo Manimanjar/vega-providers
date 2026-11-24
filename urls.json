@@ -27,8 +27,9 @@
   },
   "filmyfly": {
     "name": "FilmyFly",
-    "url": "https://filmyfly.kred",
+    "url": "https://filmyfly.haus",
     "mirrors": [
+      "https://filmyfly.haus",
       "https://filmyfly.kred",
       "https://filmyfly.info",
       "https://filmyfly.net",

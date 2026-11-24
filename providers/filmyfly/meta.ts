@@ -54,15 +54,16 @@ async function parseLinkmakePage(
         const $ep = cheerio.load(`<div>${epHtml}</div>`);
         const epDirectLinks: DirectLink[] = [];
 
-        $ep(".dlink a, a[href*='filesdl']").each((_: any, a: any) => {
-          let href = $(a).attr("href");
-          let title = $(a).text().trim() || "Watch";
+        $ep(".dlink a, a[href*='filesdl'], a[href*='linkmake']").each((_: any, a: any) => {
+          let href = $ep(a).attr("href");
+          let title = $ep(a).text().trim() || "Watch";
           if (
             href &&
             href.startsWith("http") &&
             !href.includes("/Tg/") &&
             !href.includes("t.me") &&
-            !title.toLowerCase().includes("telegram")
+            !title.toLowerCase().includes("telegram") &&
+            href !== linkmakeUrl
           ) {
             if (href.includes("filesdl") && href.includes("/drive/")) {
               href = href.replace("/drive/", "/cloud/");
@@ -71,7 +72,7 @@ async function parseLinkmakePage(
             epDirectLinks.push({
               title,
               link: href,
-              type: "series",
+              type: "movie",
             });
           }
         });
@@ -88,7 +89,7 @@ async function parseLinkmakePage(
     // If no episode groups found or it's a regular movie
     if (groups.length === 0) {
       const directLinks: DirectLink[] = [];
-      $(".dlink a, a[href*='filesdl']").each((_: any, a: any) => {
+      $(".dlink a, a[href*='filesdl'], a[href*='linkmake']").each((_: any, a: any) => {
         let href = $(a).attr("href");
         let title = $(a).text().trim() || "Watch";
         if (
@@ -96,7 +97,8 @@ async function parseLinkmakePage(
           href.startsWith("http") &&
           !href.includes("/Tg/") &&
           !href.includes("t.me") &&
-          !title.toLowerCase().includes("telegram")
+          !title.toLowerCase().includes("telegram") &&
+          href !== linkmakeUrl
         ) {
           if (href.includes("filesdl") && href.includes("/drive/")) {
             href = href.replace("/drive/", "/cloud/");
@@ -105,7 +107,7 @@ async function parseLinkmakePage(
           directLinks.push({
             title,
             link: href,
-            type: isSeries ? "series" : "movie",
+            type: "movie",
           });
         }
       });
@@ -225,7 +227,7 @@ export const getMeta = async function ({
               {
                 title: dl.title,
                 link: dl.url,
-                type: isSeries ? "series" : "movie",
+                type: "movie",
               },
             ],
           });
@@ -238,7 +240,7 @@ export const getMeta = async function ({
             {
               title: dl.title,
               link: dl.url,
-              type: isSeries ? "series" : "movie",
+              type: "movie",
             },
           ],
         });
@@ -253,19 +255,22 @@ export const getMeta = async function ({
           {
             title: title,
             link: movieUrl,
-            type: isSeries ? "series" : "movie",
+            type: "movie",
           },
         ],
       });
     }
 
-    const info: Info = {
+    const info: any = {
       title,
-      synopsis,
+      synopsis: synopsis || `Watch ${title} on FilmyFly.`,
       image,
       poster: image,
+      imdbId: "",
       type: isSeries ? "series" : "movie",
-      tags,
+      tags: tags.length > 0 ? tags : ["Movie"],
+      cast: [],
+      rating: "8.0/10",
       linkList,
     };
 
@@ -276,16 +281,20 @@ export const getMeta = async function ({
     console.error("FilmyFly getMeta error:", err?.message || err);
     return {
       title: "Movie",
-      synopsis: "",
+      synopsis: "Watch movie on FilmyFly.",
       image: "",
       poster: "",
+      imdbId: "",
       type: "movie",
+      tags: [],
+      cast: [],
+      rating: "8.0/10",
       linkList: [
         {
           title: "Stream",
           directLinks: [{ title: "Stream", link: movieUrl, type: "movie" }],
         },
       ],
-    };
+    } as any;
   }
 };

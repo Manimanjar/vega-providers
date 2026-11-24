@@ -1,5 +1,5 @@
 // @vega-provider filmyfly
-// @vega-version 1.0.2
+// @vega-version 1.0.3
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -193,18 +193,40 @@ var getStream = async function({
       const html = res.data || "";
       const $ = cheerio.load(html);
       const filesdlUrls = [];
+      const seenFurls = /* @__PURE__ */ new Set();
       $(".dlink a, a[href*='filesdl']").each((_, a) => {
         let href = $(a).attr("href");
         if (href && href.startsWith("http")) {
           if (href.includes("/drive/")) href = href.replace("/drive/", "/cloud/");
-          filesdlUrls.push(href);
+          if (!seenFurls.has(href)) {
+            seenFurls.add(href);
+            filesdlUrls.push(href);
+          }
         }
       });
+      const batchResults = await Promise.all(
+        filesdlUrls.slice(0, 10).map(
+          (furl) => extractFromFilesdl(furl, axios, cheerio, signal).catch(() => [])
+        )
+      );
       const allStreams = [];
-      for (const furl of filesdlUrls.slice(0, 3)) {
-        const s = await extractFromFilesdl(furl, axios, cheerio, signal);
-        allStreams.push(...s);
+      const seenLinks = /* @__PURE__ */ new Set();
+      for (const list of batchResults) {
+        for (const s of list) {
+          if (s.link && !seenLinks.has(s.link)) {
+            seenLinks.add(s.link);
+            allStreams.push(s);
+          }
+        }
       }
+      const qualRank = (q) => {
+        if (q === "2160") return 4;
+        if (q === "1080") return 3;
+        if (q === "720") return 2;
+        if (q === "480") return 1;
+        return 0;
+      };
+      allStreams.sort((a, b) => qualRank(b.quality) - qualRank(a.quality));
       if (allStreams.length > 0) return allStreams;
     } catch (e) {
     }

@@ -183,7 +183,7 @@ async function parseVideoGrid(options) {
   var signal = options.signal;
   var kvStore = options.kvStore;
 
-  var candidateBases = [baseUrl, "https://www.xvideos2.com", "https://www.xvideos3.com"];
+  var candidateBases = [baseUrl, "https://www.xvideos.com", "https://www.xvideos3.com", "https://www.xvideos2.com"];
   var seenBases = {};
   var uniqueBases = [];
   for (var b = 0; b < candidateBases.length; b++) {
@@ -197,6 +197,7 @@ async function parseVideoGrid(options) {
   try {
     var res = null;
     var lastErr = null;
+    var activeBase = baseUrl;
     for (var bi = 0; bi < uniqueBases.length; bi++) {
       var currentBase = uniqueBases[bi];
       var targetUrl = url;
@@ -219,13 +220,15 @@ async function parseVideoGrid(options) {
             signal: signal,
             maxRedirects: 5,
           });
+          activeBase = currentBase;
           break;
         } catch (e) {
           lastErr = e;
           var status = e && e.response && e.response.status;
-          if (status === 429 && attempt === 0) {
+          var code = e && e.code;
+          if ((status === 429 || code === "ECONNRESET" || code === "ETIMEDOUT") && attempt === 0) {
             await new Promise(function (resolve) {
-              setTimeout(resolve, 1500);
+              setTimeout(resolve, status === 429 ? 1200 : 250);
             });
             continue;
           }
@@ -236,7 +239,7 @@ async function parseVideoGrid(options) {
     }
     if (!res) throw lastErr || new Error("no response from any mirror");
 
-    updateLearnedDomain(res, baseUrl, kvStore);
+    updateLearnedDomain(res, activeBase, kvStore);
 
     var html = res.data;
     var $ = cheerio.load(html);
@@ -276,9 +279,10 @@ async function parseVideoGrid(options) {
       seenVideoIds.add(videoId);
 
       var img = $el.find("img").first();
+      var rawSrcset = (img.attr("data-srcset") || "").split(",")[0].trim().split(/\s+/)[0];
       var image =
         img.attr("data-src") ||
-        img.attr("data-srcset") ||
+        rawSrcset ||
         img.attr("src") ||
         "";
 
@@ -305,7 +309,7 @@ async function parseVideoGrid(options) {
 
       var absoluteLink = rawHref.startsWith("http")
         ? rawHref
-        : baseUrl + (rawHref.startsWith("/") ? "" : "/") + rawHref;
+        : activeBase + (rawHref.startsWith("/") ? "" : "/") + rawHref;
 
       posts.push({
         title: rawTitle,
@@ -595,8 +599,8 @@ const getPostsImpl = async function (params) {
   }
 
   if (category && category.mode === "random_feed") {
-    // General homepage sequential feed: page 1, 2, 3... till the last page!
-    var targetUrl = page === 1 ? baseUrl + "/" : baseUrl + "/new/" + page + "/";
+    // General homepage sequential feed: page 1 = /, page 2 = /new/1/, page 3 = /new/2/ ...
+    var targetUrl = page <= 1 ? baseUrl + "/" : baseUrl + "/new/" + (page - 1) + "/";
     return parseVideoGrid({
       url: targetUrl,
       baseUrl: baseUrl,

@@ -1,5 +1,5 @@
 // @vega-provider pornhub
-// @vega-version 2.4.1
+// @vega-version 2.4.2
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -568,7 +568,7 @@ async function getPooledSearchPage(opts) {
         if (pagePosts.length === 0) {
           try {
             await new Promise(function(r) {
-              setTimeout(r, 1e3);
+              setTimeout(r, 400);
             });
             pagePosts = await fetchTermPage(currentTerm, curTermPage) || [];
           } catch (e) {
@@ -577,7 +577,7 @@ async function getPooledSearchPage(opts) {
         }
         if (pagePosts.length === 0) {
           emptyStreak++;
-          if (emptyStreak >= 2) {
+          if (emptyStreak >= 1) {
             emptyStreak = 0;
             curTermIdx++;
             curTermPage = 1;
@@ -594,7 +594,7 @@ async function getPooledSearchPage(opts) {
         curTermPage++;
         if (pool.length === before) {
           dupStreak++;
-          if (dupStreak >= 15) {
+          if (dupStreak >= 5) {
             dupStreak = 0;
             curTermIdx++;
             curTermPage = 1;
@@ -617,7 +617,7 @@ async function getPooledSearchPage(opts) {
         if (pagePosts.length === 0) {
           try {
             await new Promise(function(r) {
-              setTimeout(r, 1200);
+              setTimeout(r, 400);
             });
             pagePosts = await fetchSitePage(sp) || [];
           } catch (e) {
@@ -627,7 +627,7 @@ async function getPooledSearchPage(opts) {
         fetchedPages = sp;
         if (pagePosts.length === 0) {
           emptyStreak++;
-          if (emptyStreak >= 5) break;
+          if (emptyStreak >= 2) break;
           continue;
         }
         emptyStreak = 0;
@@ -635,7 +635,7 @@ async function getPooledSearchPage(opts) {
         pool = dedupePosts(pool.concat(pagePosts));
         if (pool.length === before) {
           dupStreak++;
-          if (dupStreak >= 15) break;
+          if (dupStreak >= 5) break;
         } else {
           dupStreak = 0;
         }
@@ -647,7 +647,7 @@ async function getPooledSearchPage(opts) {
     var start;
     var end;
     if (isFirstServe) {
-      start = nextStart;
+      start = nextStart > 0 ? nextStart : (page - 1) * PAGE;
       end = start + PAGE;
       pageStarts[page] = start;
     } else {
@@ -1186,6 +1186,7 @@ function groupSeriesPosts(posts) {
 var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
 var DEFAULT_BASE_URL = "https://www.pornhub.com";
 var memoryCache = { data: null, expiresAt: 0 };
+var BASE_CACHE_KEY = "pornhub_baseUrlCacheV1";
 function formatDuration(totalSeconds) {
   var s = Math.max(0, Math.floor(totalSeconds || 0));
   if (!s) return "";
@@ -1204,10 +1205,10 @@ function upgradePornhubImageUrl(url) {
   if (origMatch && origMatch[1]) {
     return "https://ei.phncdn.com" + origMatch[1];
   }
-  if (cleanUrl.includes("pix-fl.phncdn.com") || cleanUrl.includes("pix-egi.phncdn.com") || cleanUrl.includes("ei.phncdn.com")) {
+  if (cleanUrl.includes("pix-egi.phncdn.com") || cleanUrl.includes("ei.phncdn.com") || cleanUrl.includes("pix-fl.phncdn.com") && cleanUrl.includes("hdnea=")) {
     return cleanUrl;
   }
-  if (cleanUrl.includes("pix-cdn77.phncdn.com")) {
+  if (cleanUrl.includes("pix-cdn77.phncdn.com") && cleanUrl.includes("hdnea=")) {
     return cleanUrl.replace("pix-cdn77.phncdn.com", "pix-fl.phncdn.com");
   }
   return cleanUrl;
@@ -1259,15 +1260,34 @@ async function getBase(kvStore, axios) {
       return cachedEntry.url.replace(/\/+$/, "");
     }
   }
+  if (kvStore && typeof kvStore.get === "function") {
+    try {
+      var cachedRaw = await kvStore.get(BASE_CACHE_KEY);
+      if (cachedRaw) {
+        var cached = typeof cachedRaw === "string" ? JSON.parse(cachedRaw) : cachedRaw;
+        if (cached && cached.url && cached.expiresAt > now) {
+          return String(cached.url).replace(/\/+$/, "");
+        }
+      }
+    } catch (e) {
+    }
+  }
   if (axios) {
     try {
-      var res = await axios.get(URLS_ENDPOINT, { timeout: 4e3 });
+      var res = await axios.get(URLS_ENDPOINT, { timeout: 2500 });
       if (res.data && typeof res.data === "object") {
         memoryCache.data = res.data;
         memoryCache.expiresAt = now + 36e5;
         var entry = res.data["pornhub"];
         if (entry && entry.url) {
-          return entry.url.replace(/\/+$/, "");
+          var cleanUrl = entry.url.replace(/\/+$/, "");
+          if (kvStore && typeof kvStore.set === "function") {
+            try {
+              await kvStore.set(BASE_CACHE_KEY, JSON.stringify({ url: cleanUrl, expiresAt: now + 36e5 }));
+            } catch (e) {
+            }
+          }
+          return cleanUrl;
         }
       }
     } catch (e) {
@@ -1370,7 +1390,7 @@ async function searchApi(query, page, opts) {
               var cand2 = candidates[ci2];
               if (cand2 && typeof cand2 === "string") {
                 var up2 = upgradePornhubImageUrl(cand2);
-                if (up2 && (up2.includes("pix-fl.phncdn.com") || up2.includes("pix-egi.phncdn.com") || up2.includes("ei.phncdn.com"))) {
+                if (up2 && (up2.includes("ei.phncdn.com") || up2.includes("pix-egi.phncdn.com") || up2.includes("pix-fl.phncdn.com") && up2.includes("hdnea="))) {
                   image = up2;
                   break;
                 }
@@ -1406,7 +1426,7 @@ async function searchApi(query, page, opts) {
         }
         if (cdn77NeedsFix.length > 0) {
           await Promise.all(
-            cdn77NeedsFix.slice(0, 10).map(async function(item) {
+            cdn77NeedsFix.slice(0, 30).map(async function(item) {
               try {
                 var fixUrl = "https://de.pornhub.com/webmasters/video_by_id?id=" + item.viewkey + "&thumbsize=large_hd";
                 var fixRes = await axios.get(fixUrl, {
@@ -1619,14 +1639,18 @@ var getPostsImpl = async function(params) {
         distinctQueries.push(term);
       }
       if (distinctQueries.length === 0) return [];
-      var startIdx = pageIndex * 3 % distinctQueries.length;
-      var selected = distinctQueries.slice(startIdx, startIdx + 3);
-      if (selected.length < 3 && distinctQueries.length > selected.length) {
-        selected = selected.concat(distinctQueries.slice(0, 3 - selected.length));
+      var batchSize = 3;
+      var numBatches = Math.max(1, Math.ceil(distinctQueries.length / batchSize));
+      var batchIdx = pageIndex % numBatches;
+      var sitePage = Math.floor(pageIndex / numBatches) + 1;
+      var startIdx = batchIdx * batchSize;
+      var selected = distinctQueries.slice(startIdx, startIdx + batchSize);
+      if (selected.length < batchSize && distinctQueries.length > selected.length) {
+        selected = selected.concat(distinctQueries.slice(0, batchSize - selected.length));
       }
       var groups = await Promise.all(
         selected.map(function(term2) {
-          return searchApi(term2, pageIndex + 1, apiOpts);
+          return searchApi(term2, sitePage, apiOpts);
         })
       );
       var merged = [];

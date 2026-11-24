@@ -1,5 +1,5 @@
 // @vega-provider rule34video
-// @vega-version 2.4.0
+// @vega-version 2.4.1
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -221,15 +221,17 @@ var getStream = async function({
       Cookie: pageCookies || void 0,
       Referer: videoPageUrl
     };
-    for (const item of rawVariants) {
-      try {
-        const direct = await resolveDirectUrl(item.url, axios, resolveHeaders);
-        if (direct && direct.startsWith("http") && direct !== item.url) {
-          item.url = direct;
+    await Promise.all(
+      rawVariants.map(async (item) => {
+        try {
+          const direct = await resolveDirectUrl(item.url, axios, resolveHeaders);
+          if (direct && direct.startsWith("http") && direct !== item.url) {
+            item.url = direct;
+          }
+        } catch (e) {
         }
-      } catch (e) {
-      }
-    }
+      })
+    );
     const streamHeaders = {
       Referer: baseUrl + "/",
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"

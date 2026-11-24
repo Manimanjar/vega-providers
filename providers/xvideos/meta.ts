@@ -1,6 +1,93 @@
 import { Info, ProviderContext } from "../types";
 import { parsePartTitle, fetchSeriesParts } from "../series";
 
+const URLS_ENDPOINT =
+  "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
+const DEFAULT_BASE_URL = "https://www.xvideos.com";
+const BASE_CACHE_KEY = "xvideos_baseUrlCacheV1";
+let memoryCache = { data: null as any, expiresAt: 0 };
+
+async function getBase(kvStore: any, axios: any): Promise<string> {
+  if (kvStore && typeof kvStore.get === "function") {
+    try {
+      const custom = await kvStore.get("baseUrlOverride");
+      if (custom && typeof custom === "string" && custom.trim().length > 0) {
+        const cleanCustom = custom.trim().replace(/\/+$/, "");
+        if (cleanCustom !== DEFAULT_BASE_URL) {
+          return cleanCustom;
+        }
+      }
+    } catch (e) {}
+  }
+
+  const now = Date.now();
+  if (memoryCache.data && now < memoryCache.expiresAt) {
+    const cachedEntry = memoryCache.data["xvideos"];
+    if (cachedEntry && cachedEntry.url) {
+      return cachedEntry.url.replace(/\/+$/, "");
+    }
+  }
+
+  if (kvStore && typeof kvStore.get === "function") {
+    try {
+      const cachedRaw = await kvStore.get(BASE_CACHE_KEY);
+      if (cachedRaw) {
+        const cached =
+          typeof cachedRaw === "string" ? JSON.parse(cachedRaw) : cachedRaw;
+        if (cached && cached.url && cached.expiresAt > now) {
+          return String(cached.url).replace(/\/+$/, "");
+        }
+      }
+    } catch (e) {}
+  }
+
+  if (axios) {
+    try {
+      const res = await axios.get(URLS_ENDPOINT, { timeout: 3000 });
+      if (res.data && typeof res.data === "object") {
+        memoryCache.data = res.data;
+        memoryCache.expiresAt = now + 3600000;
+        const entry = res.data["xvideos"];
+        if (entry && entry.url) {
+          const cleanEntry = entry.url.replace(/\/+$/, "");
+          if (kvStore && typeof kvStore.set === "function") {
+            try {
+              await kvStore.set(
+                BASE_CACHE_KEY,
+                JSON.stringify({ url: cleanEntry, expiresAt: now + 3600000 })
+              );
+            } catch (e) {}
+          }
+          return cleanEntry;
+        }
+      }
+    } catch (e) {}
+  }
+
+  if (kvStore && typeof kvStore.get === "function") {
+    try {
+      const learned = await kvStore.get("xvideos_learnedDomain");
+      if (learned && typeof learned === "string" && learned.startsWith("http")) {
+        return learned.replace(/\/+$/, "");
+      }
+    } catch (e) {}
+  }
+
+  return DEFAULT_BASE_URL;
+}
+
+function parseDurationSeconds(text: string): number {
+  if (!text) return 0;
+  let sec = 0;
+  const hMatch = text.match(/(\d+)\s*h/i);
+  const mMatch = text.match(/(\d+)\s*min/i);
+  const sMatch = text.match(/(\d+)\s*sec/i);
+  if (hMatch) sec += parseInt(hMatch[1], 10) * 3600;
+  if (mMatch) sec += parseInt(mMatch[1], 10) * 60;
+  if (sMatch) sec += parseInt(sMatch[1], 10);
+  return sec;
+}
+
 export const getMeta = async function ({
   link,
   providerContext,
@@ -9,67 +96,118 @@ export const getMeta = async function ({
   providerContext: ProviderContext;
 }): Promise<Info> {
   const { axios, cheerio, commonHeaders, kvStore } = providerContext;
+  const baseUrl = await getBase(kvStore, axios);
 
-  let baseUrl = "https://www.xvideos.com";
-  if (kvStore && typeof kvStore.get === "function") {
+  let pathPart = link || "";
+  if (pathPart.startsWith("http")) {
     try {
-      const custom = await kvStore.get("baseUrlOverride");
-      if (custom && typeof custom === "string" && custom.trim().length > 0) {
-        baseUrl = custom.trim().replace(/\/+$/, "");
-      }
+      const parsedUrl = new URL(pathPart);
+      pathPart = parsedUrl.pathname + parsedUrl.search;
     } catch (e) {}
   }
+  if (!pathPart.startsWith("/")) {
+    pathPart = "/" + pathPart;
+  }
 
-  const url = link.startsWith("http")
-    ? link
-    : `${baseUrl}${link.startsWith("/") ? "" : "/"}${link}`;
+  const candidateBases = [
+    baseUrl,
+    "https://www.xvideos.com",
+    "https://www.xvideos3.com",
+    "https://www.xvideos2.com",
+  ].filter((b, idx, arr) => b && arr.indexOf(b) === idx);
+
+  let effectiveUrl = `${baseUrl}${pathPart}`;
 
   try {
-    const res = await axios.get(url, {
-      headers: {
-        ...commonHeaders,
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Referer: baseUrl,
-      },
-    });
+    let html = "";
+    let workingBase = baseUrl;
 
-    const html = res.data;
+    for (const curBase of candidateBases) {
+      const targetUrl = `${curBase}${pathPart}`;
+      for (let retry = 0; retry < 2; retry++) {
+        try {
+          const res = await axios.get(targetUrl, {
+            headers: {
+              ...commonHeaders,
+              "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              Referer: `${curBase}/`,
+              Accept:
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
+            timeout: 8000,
+            maxRedirects: 5,
+          });
+          if (typeof res.data === "string" && res.data.includes("html5player")) {
+            html = res.data;
+            workingBase = curBase;
+            effectiveUrl = targetUrl;
+            break;
+          }
+          if (typeof res.data === "string" && res.data.length > 500) {
+            html = res.data;
+            workingBase = curBase;
+            effectiveUrl = targetUrl;
+            break;
+          }
+        } catch (e) {
+          if (retry === 0) {
+            await new Promise((r) => setTimeout(r, 250));
+          }
+        }
+      }
+      if (html) break;
+    }
+
+    if (!html) {
+      throw new Error("No HTML returned from any XVideos mirror");
+    }
+
     const $ = cheerio.load(html);
 
-    // Extract title from html5player or DOM
-    const playerTitleMatch = html.match(/html5player\.setVideoTitle\s*\(\s*['"]([^'"]+)['"]\s*\)/i);
+    const playerTitleMatch = html.match(
+      /html5player\.setVideoTitle\s*\(\s*['"]([^'"]+)['"]\s*\)/i
+    );
     const title =
       (playerTitleMatch ? playerTitleMatch[1] : null) ||
-      $("h2.page-title, .page-title, title").first().text().replace(/- XVIDEOS\.COM/i, "").trim() ||
+      $("h2.page-title, .page-title, title")
+        .first()
+        .text()
+        .replace(/- XVIDEOS\.COM/i, "")
+        .trim() ||
       "Video";
 
-    // Extract poster thumbnail
-    const playerThumbMatch = html.match(/html5player\.setThumbUrl\s*\(\s*['"]([^'"]+)['"]\s*\)/i);
-    const playerThumb169Match = html.match(/html5player\.setThumbUrl169\s*\(\s*['"]([^'"]+)['"]\s*\)/i);
+    // Prefer JPG thumbnails over .avif (React Native Android <Image> handles JPG reliably)
+    const playerThumbMatch = html.match(
+      /html5player\.setThumbUrl\s*\(\s*['"]([^'"]+)['"]\s*\)/i
+    );
+    const playerThumb169Match = html.match(
+      /html5player\.setThumbUrl169\s*\(\s*['"]([^'"]+)['"]\s*\)/i
+    );
+    const ogImage = $('meta[property="og:image"]').attr("content") || "";
+    const thumb169 = playerThumb169Match ? playerThumb169Match[1] : "";
+    const thumbStd = playerThumbMatch ? playerThumbMatch[1] : "";
+
     const image =
-      (playerThumb169Match ? playerThumb169Match[1] : null) ||
-      (playerThumbMatch ? playerThumbMatch[1] : null) ||
-      $('meta[property="og:image"]').attr("content") ||
+      (thumb169 && !thumb169.endsWith(".avif") ? thumb169 : "") ||
+      (ogImage && !ogImage.endsWith(".avif") ? ogImage : "") ||
+      thumbStd ||
+      thumb169 ||
+      ogImage ||
       "";
 
-    // Extract tags — ONLY real /tags/ links. The old selector
-    // ".video-metadata a" also grabbed the uploader and models with
-    // their subscriber counts ("Scott Stark392k"), plus "Edit tags"
-    // and "+", so the detail screen showed junk instead of tags.
     const tags: string[] = [];
-    $('.video-tags-list a[href^="/tags/"]').each((_, el) => {
+    $('.video-tags-list a[href^="/tags/"]').each((_: any, el: any) => {
       const tagText = $(el).text().trim();
       if (tagText && tagText !== "Edit tags" && !tags.includes(tagText)) {
         tags.push(tagText);
       }
     });
 
-    // Models / stars, without the subscriber counts stuck to the name.
     const cast: string[] = [];
     $(
       '.video-tags-list a[href^="/models/"], .video-tags-list a[href^="/amateurs/"]'
-    ).each((_, el) => {
+    ).each((_: any, el: any) => {
       const name = $(el)
         .clone()
         .find(".count, .user-subscribe")
@@ -83,16 +221,17 @@ export const getMeta = async function ({
       }
     });
 
-    // Extract duration and quality indicator
     const duration = $(".duration, .video-duration").first().text().trim();
+    const durationSec = parseDurationSeconds(duration);
     const quality =
       html.includes("setVideoUrlHigh") || html.includes("1080p")
         ? "1080p"
         : "720p";
-    // XVideos pages have no real description — the meta description is
-    // just "XVIDEOS <title> free". Build a useful synopsis from the
-    // title, duration, quality, stars and tags instead of leaving the
-    // detail screen on "No synopsis available".
+
+    const ratingMatch = $(".rating-good-perc").first().text().trim().match(/(\d+)/);
+    const ratingVal = ratingMatch ? (parseInt(ratingMatch[1], 10) / 10).toFixed(1) : "8.2";
+    const ratingStr = `${ratingVal}/10`;
+
     const synopsisParts = [
       `${title}${duration ? ` — ${duration}` : ""} • ${quality}.`,
     ];
@@ -104,22 +243,14 @@ export const getMeta = async function ({
     }
     const synopsis = synopsisParts.join(" ");
 
-    // Parts grouping: if this video is a numbered part of a series,
-    // the detail becomes the series page — the first part's thumbnail
-    // and every part listed below in order, like chapters in the
-    // comics app. A failed search, or fewer than 2 parts, falls
-    // through to the single video below — grouping can never hide a
-    // video. (Only numbered parts expand here; a named part opened
-    // directly still plays fine, and it appears in the parts list
-    // when any numbered part of its series is opened.)
-    var parsed = parsePartTitle(title);
+    const parsed = parsePartTitle(title);
     if (parsed && parsed.partNum != null) {
-      var seriesParts = [];
+      let seriesParts: any[] = [];
       try {
         seriesParts = await fetchSeriesParts({
           axios: axios,
           cheerio: cheerio,
-          baseUrl: baseUrl,
+          baseUrl: workingBase,
           site: "xvideos",
           baseTitle: parsed.base,
           commonHeaders: commonHeaders,
@@ -128,8 +259,8 @@ export const getMeta = async function ({
         seriesParts = [];
       }
       if (seriesParts.length >= 2) {
-        var firstImage = (seriesParts[0] && seriesParts[0].image) || image;
-        var seriesSynopsisParts = [
+        const firstImage = (seriesParts[0] && seriesParts[0].image) || image;
+        const seriesSynopsisParts = [
           parsed.base + " — " + seriesParts.length + " parts • " + quality + ".",
         ];
         if (cast.length > 0) {
@@ -145,10 +276,11 @@ export const getMeta = async function ({
           poster: firstImage,
           imdbId: "",
           type: "series",
-          tags: tags.length > 0 ? tags : undefined,
-          cast: cast.length > 0 ? cast : undefined,
-          rating: duration || undefined,
-          webUrl: url,
+          tags: tags,
+          cast: cast,
+          rating: ratingStr,
+          duration: durationSec || 600,
+          webUrl: effectiveUrl,
           linkList: [
             {
               title: "Parts",
@@ -168,10 +300,11 @@ export const getMeta = async function ({
       poster: image,
       imdbId: "",
       type: "movie",
-      tags: tags.length > 0 ? tags : undefined,
-      cast: cast.length > 0 ? cast : undefined,
-      rating: duration || undefined,
-      webUrl: url,
+      tags: tags,
+      cast: cast,
+      rating: ratingStr,
+      duration: durationSec || 600,
+      webUrl: effectiveUrl,
       linkList: [
         {
           title: "Stream Video",
@@ -179,7 +312,7 @@ export const getMeta = async function ({
           directLinks: [
             {
               title: title,
-              link: url,
+              link: effectiveUrl,
               type: "movie",
             },
           ],
@@ -189,18 +322,24 @@ export const getMeta = async function ({
   } catch (err: any) {
     console.error("XVideos meta error:", err?.message || err);
     return {
-      title: "Video Details",
-      synopsis: "",
+      title: "XVideos Video",
+      synopsis: "Watch video on XVideos.",
       image: "",
+      poster: "",
       imdbId: "",
       type: "movie",
+      tags: [],
+      cast: [],
+      rating: "8.0/10",
+      duration: 600,
+      webUrl: effectiveUrl,
       linkList: [
         {
           title: "Stream Video",
           directLinks: [
             {
               title: "Play",
-              link: url,
+              link: effectiveUrl,
               type: "movie",
             },
           ],

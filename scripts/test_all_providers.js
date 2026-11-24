@@ -344,6 +344,76 @@ async function runTests() {
   }
 
   // -----------------------------------------------------------------
+  // 4. XVIDEOS TESTS
+  // -----------------------------------------------------------------
+  console.log("\n--- 4. Testing XVideos Provider ---");
+  const xvPosts = require(path.resolve(__dirname, "../dist/xvideos/posts.js"));
+  const xvMeta = require(path.resolve(__dirname, "../dist/xvideos/meta.js"));
+  const xvStream = require(path.resolve(__dirname, "../dist/xvideos/stream.js"));
+  const xvContext = createMockContext();
+
+  let xvSampleLink = "";
+  try {
+    const posts = await xvPosts.getPosts({ filter: "homepage", page: 1, providerContext: xvContext });
+    assert(Array.isArray(posts) && posts.length > 10, `XVideos homepage loaded ${posts.length} posts`);
+    if (posts.length > 0) {
+      assert(!!posts[0].title, `XVideos first post has valid title`);
+      assert(!!posts[0].link && posts[0].link.startsWith("http"), `XVideos first post has valid link`);
+      assert(!!posts[0].image && posts[0].image.startsWith("http") && !posts[0].image.includes(" "), `XVideos first post has valid image URL`);
+      xvSampleLink = posts[0].link;
+    }
+  } catch (e) {
+    assert(false, `XVideos getPosts error: ${e.message}`);
+  }
+
+  try {
+    const searchPosts = await xvPosts.getSearchPosts({ searchQuery: "step", page: 1, providerContext: xvContext });
+    assert(Array.isArray(searchPosts) && searchPosts.length > 0, `XVideos getSearchPosts returned ${searchPosts.length} items`);
+  } catch (e) {
+    assert(false, `XVideos getSearchPosts error: ${e.message}`);
+  }
+
+  if (xvSampleLink) {
+    try {
+      const meta = await xvMeta.getMeta({ link: xvSampleLink, providerContext: xvContext });
+      assert(!!meta.title && meta.title !== "XVideos Video", `XVideos getMeta returned real title: '${meta.title}'`);
+      assert(typeof meta.imdbId === "string", `XVideos getMeta imdbId is string: '${meta.imdbId}'`);
+      assert(typeof meta.rating === "string" && meta.rating.includes("/"), `XVideos getMeta rating safe string: '${meta.rating}'`);
+      assert(Array.isArray(meta.tags) && Array.isArray(meta.cast), `XVideos getMeta tags/cast are arrays`);
+      assert(!!meta.poster && meta.poster.startsWith("http"), `XVideos getMeta has poster populated (${meta.poster})`);
+      assert(Array.isArray(meta.linkList) && meta.linkList.length > 0, `XVideos meta linkList has ${meta.linkList?.length} groups`);
+    } catch (e) {
+      assert(false, `XVideos getMeta error: ${e.message}`);
+    }
+
+    try {
+      const streams = await xvStream.getStream({
+        link: xvSampleLink,
+        type: "movie",
+        providerContext: xvContext,
+      });
+      assert(Array.isArray(streams) && streams.length > 0, `XVideos resolved ${streams.length} streams`);
+      if (streams.length > 0) {
+        assert(streams[0].link.startsWith("http"), `XVideos stream URL valid: ${streams[0].server}`);
+        try {
+          const res = await axios.head(streams[0].link, {
+            headers: streams[0].headers || {},
+            timeout: 8000,
+          });
+          assert(
+            res.status === 200 || res.status === 206,
+            `XVideos stream CDN returns HTTP ${res.status} (${res.headers["content-type"]})`
+          );
+        } catch (e) {
+          assert(false, `XVideos stream CDN check failed: ${e.message}`);
+        }
+      }
+    } catch (e) {
+      assert(false, `XVideos getStream error: ${e.message}`);
+    }
+  }
+
+  // -----------------------------------------------------------------
   // 5. FAPHOUSE TESTS
   // -----------------------------------------------------------------
   console.log("\n--- 5. Testing FapHouse Provider ---");

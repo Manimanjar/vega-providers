@@ -2,7 +2,7 @@
     {
         "display_name": "XVideos",
         "value": "xvideos",
-        "version": "2.4.0",
+        "version": "2.4.1",
         "icon": "https://cdn-icons-png.flaticon.com/512/831/831331.png",
         "type": "global",
         "disabled": false,
@@ -11,7 +11,7 @@
     {
         "display_name": "Rule34Video",
         "value": "rule34video",
-        "version": "2.4.0",
+        "version": "2.4.1",
         "icon": "https://rule34video.com/apple-touch-icon.png",
         "type": "global",
         "disabled": false,
@@ -20,7 +20,7 @@
     {
         "display_name": "PornHub",
         "value": "pornhub",
-        "version": "2.4.1",
+        "version": "2.4.2",
         "icon": "https://www.pornhub.com/favicon.ico",
         "type": "global",
         "disabled": false,
@@ -29,7 +29,7 @@
     {
         "display_name": "FilmyFly",
         "value": "filmyfly",
-        "version": "1.0.2",
+        "version": "1.0.3",
         "icon": "https://img.iwebp.store/images/files/afaa901b76bc48d57a346319423035dd384208.png",
         "type": "global",
         "disabled": false,
@@ -38,7 +38,7 @@
     {
         "display_name": "FapHouse",
         "value": "faphouse",
-        "version": "1.0.0",
+        "version": "1.0.1",
         "icon": "https://assets-nss.fhcdnmedia.online/9d3f29d8666549ad223adec08efdc848cffcf297/fap-site/default/images/favicons/favicon-96x96.png",
         "type": "global",
         "disabled": false,

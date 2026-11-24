@@ -211,21 +211,43 @@ export const getStream = async function ({
       const html = res.data || "";
       const $ = cheerio.load(html);
 
-      // Extract all filesdl links
+      // Extract all filesdl links (including 1080p and 2160p/4K)
       const filesdlUrls: string[] = [];
+      const seenFurls = new Set<string>();
       $(".dlink a, a[href*='filesdl']").each((_: any, a: any) => {
         let href = $(a).attr("href");
         if (href && href.startsWith("http")) {
           if (href.includes("/drive/")) href = href.replace("/drive/", "/cloud/");
-          filesdlUrls.push(href);
+          if (!seenFurls.has(href)) {
+            seenFurls.add(href);
+            filesdlUrls.push(href);
+          }
         }
       });
 
+      const batchResults = await Promise.all(
+        filesdlUrls.slice(0, 10).map((furl) =>
+          extractFromFilesdl(furl, axios, cheerio, signal).catch(() => [])
+        )
+      );
       const allStreams: Stream[] = [];
-      for (const furl of filesdlUrls.slice(0, 3)) {
-        const s = await extractFromFilesdl(furl, axios, cheerio, signal);
-        allStreams.push(...s);
+      const seenLinks = new Set<string>();
+      for (const list of batchResults) {
+        for (const s of list) {
+          if (s.link && !seenLinks.has(s.link)) {
+            seenLinks.add(s.link);
+            allStreams.push(s);
+          }
+        }
       }
+      const qualRank = (q?: string) => {
+        if (q === "2160") return 4;
+        if (q === "1080") return 3;
+        if (q === "720") return 2;
+        if (q === "480") return 1;
+        return 0;
+      };
+      allStreams.sort((a, b) => qualRank(b.quality) - qualRank(a.quality));
       if (allStreams.length > 0) return allStreams;
     } catch (e) {}
   }

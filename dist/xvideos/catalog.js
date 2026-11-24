@@ -1,5 +1,5 @@
 // @vega-provider xvideos
-// @vega-version 2.4.0
+// @vega-version 2.4.1
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;

@@ -78,19 +78,21 @@ export const getMeta = async function ({
       synopsis = `Watch ${title} in HD on FapHouse.`;
     }
 
-    // Tags / Categories
+    // Tags / Categories (scoped strictly to video info section, never navbar/related)
     const tags: string[] = [];
-    $("a[href*='/c/']").each((_: any, a: any) => {
-      let t = $(a).text().trim();
+    $(".video-info-details__categories a.vid-c[href*='/c/']").each((_: any, a: any) => {
+      const t = $(a).text().trim();
       if (t && !tags.includes(t) && !t.includes("All") && t.length < 30) {
         tags.push(t);
       }
     });
 
-    // Cast / Models / Studios
+    // Cast / Models / Studios (scoped strictly to video info section)
     const cast: string[] = [];
-    $("a[href*='/models/'], a[href*='/pornstars/']").each((_: any, a: any) => {
-      let name = $(a).text().trim();
+    $(
+      ".video-info-details__studio-link, .video-info-details__categories a.vid-c[href*='/models/'], .video-info-details__categories a.vid-c[href*='/pornstars/']"
+    ).each((_: any, a: any) => {
+      const name = $(a).text().trim();
       if (name && !cast.includes(name) && !name.includes("Join") && !name.includes("See more")) {
         cast.push(name);
       }

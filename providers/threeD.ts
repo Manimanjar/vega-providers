@@ -355,7 +355,7 @@ export async function getPooledSearchPage(opts) {
         if (pagePosts.length === 0) {
           try {
             await new Promise(function (r) {
-              setTimeout(r, 1000);
+              setTimeout(r, 400);
             });
             pagePosts = (await fetchTermPage(currentTerm, curTermPage)) || [];
           } catch (e) {
@@ -364,8 +364,8 @@ export async function getPooledSearchPage(opts) {
         }
         if (pagePosts.length === 0) {
           emptyStreak++;
-          if (emptyStreak >= 2) {
-            // Reached last page of this keyword! Move to next keyword in sequence
+          if (emptyStreak >= 1) {
+            // Reached last page of this keyword; move to next keyword
             emptyStreak = 0;
             curTermIdx++;
             curTermPage = 1;
@@ -382,7 +382,7 @@ export async function getPooledSearchPage(opts) {
         curTermPage++;
         if (pool.length === before) {
           dupStreak++;
-          if (dupStreak >= 15) {
+          if (dupStreak >= 5) {
             // Loop guard for repeating identical pages: advance to next keyword
             dupStreak = 0;
             curTermIdx++;
@@ -406,7 +406,7 @@ export async function getPooledSearchPage(opts) {
         if (pagePosts.length === 0) {
           try {
             await new Promise(function (r) {
-              setTimeout(r, 1200);
+              setTimeout(r, 400);
             });
             pagePosts = (await fetchSitePage(sp)) || [];
           } catch (e) {
@@ -416,7 +416,7 @@ export async function getPooledSearchPage(opts) {
         fetchedPages = sp;
         if (pagePosts.length === 0) {
           emptyStreak++;
-          if (emptyStreak >= 5) break; // Genuine end of results after 5 empty pages
+          if (emptyStreak >= 2) break; // Genuine end of results after 2 consecutive empty pages
           continue;
         }
         emptyStreak = 0;
@@ -424,7 +424,7 @@ export async function getPooledSearchPage(opts) {
         pool = dedupePosts(pool.concat(pagePosts));
         if (pool.length === before) {
           dupStreak++;
-          if (dupStreak >= 15) break;
+          if (dupStreak >= 5) break;
         } else {
           dupStreak = 0;
         }
@@ -438,7 +438,7 @@ export async function getPooledSearchPage(opts) {
     var start;
     var end;
     if (isFirstServe) {
-      start = nextStart;
+      start = nextStart > 0 ? nextStart : (page - 1) * PAGE;
       end = start + PAGE;
       pageStarts[page] = start;
     } else {

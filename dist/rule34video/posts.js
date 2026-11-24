@@ -1,5 +1,5 @@
 // @vega-provider rule34video
-// @vega-version 2.4.0
+// @vega-version 2.4.1
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -568,7 +568,7 @@ async function getPooledSearchPage(opts) {
         if (pagePosts.length === 0) {
           try {
             await new Promise(function(r) {
-              setTimeout(r, 1e3);
+              setTimeout(r, 400);
             });
             pagePosts = await fetchTermPage(currentTerm, curTermPage) || [];
           } catch (e) {
@@ -577,7 +577,7 @@ async function getPooledSearchPage(opts) {
         }
         if (pagePosts.length === 0) {
           emptyStreak++;
-          if (emptyStreak >= 2) {
+          if (emptyStreak >= 1) {
             emptyStreak = 0;
             curTermIdx++;
             curTermPage = 1;
@@ -594,7 +594,7 @@ async function getPooledSearchPage(opts) {
         curTermPage++;
         if (pool.length === before) {
           dupStreak++;
-          if (dupStreak >= 15) {
+          if (dupStreak >= 5) {
             dupStreak = 0;
             curTermIdx++;
             curTermPage = 1;
@@ -617,7 +617,7 @@ async function getPooledSearchPage(opts) {
         if (pagePosts.length === 0) {
           try {
             await new Promise(function(r) {
-              setTimeout(r, 1200);
+              setTimeout(r, 400);
             });
             pagePosts = await fetchSitePage(sp) || [];
           } catch (e) {
@@ -627,7 +627,7 @@ async function getPooledSearchPage(opts) {
         fetchedPages = sp;
         if (pagePosts.length === 0) {
           emptyStreak++;
-          if (emptyStreak >= 5) break;
+          if (emptyStreak >= 2) break;
           continue;
         }
         emptyStreak = 0;
@@ -635,7 +635,7 @@ async function getPooledSearchPage(opts) {
         pool = dedupePosts(pool.concat(pagePosts));
         if (pool.length === before) {
           dupStreak++;
-          if (dupStreak >= 15) break;
+          if (dupStreak >= 5) break;
         } else {
           dupStreak = 0;
         }
@@ -647,7 +647,7 @@ async function getPooledSearchPage(opts) {
     var start;
     var end;
     if (isFirstServe) {
-      start = nextStart;
+      start = nextStart > 0 ? nextStart : (page - 1) * PAGE;
       end = start + PAGE;
       pageStarts[page] = start;
     } else {
@@ -1227,16 +1227,38 @@ async function parseVideoGrid(options) {
   var signal = options.signal;
   var kvStore = options.kvStore;
   var requireVideo = options.requireVideo;
+  var minDuration = typeof options.minDuration === "number" ? options.minDuration : 0;
   try {
-    var res = await axios.get(url, {
-      timeout: 12e3,
-      headers: Object.assign({}, commonHeaders, {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Referer: baseUrl + "/"
-      }),
-      signal,
-      maxRedirects: 5
-    });
+    var res = null;
+    var lastErr = null;
+    var urlsToTry = [url];
+    if (url === baseUrl + "/" || url === baseUrl) {
+      urlsToTry.push(baseUrl + "/latest-updates/");
+    }
+    for (var ui = 0; ui < urlsToTry.length && !res; ui++) {
+      for (var attempt = 0; attempt < 2; attempt++) {
+        try {
+          res = await axios.get(urlsToTry[ui], {
+            timeout: 12e3,
+            headers: Object.assign({}, commonHeaders, {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              Referer: baseUrl + "/"
+            }),
+            signal,
+            maxRedirects: 5
+          });
+          break;
+        } catch (errTry) {
+          lastErr = errTry;
+          if (attempt === 0) {
+            await new Promise(function(r) {
+              setTimeout(r, 350);
+            });
+          }
+        }
+      }
+    }
+    if (!res) throw lastErr || new Error("Rule34Video fetch failed");
     updateLearnedDomain(res, baseUrl, kvStore);
     var html = res.data;
     var $ = cheerio.load(html);
@@ -1248,7 +1270,7 @@ async function parseVideoGrid(options) {
       var rawHref = linkEl.attr("href") || "";
       var rawTitle = linkEl.attr("title") || $el.find("img.thumb").attr("alt") || linkEl.text().trim();
       if (!rawTitle || !rawHref) return;
-      if (requireVideo && !/\/video\/|animated|\\.mp4(?:$|[?#])/i.test(rawHref + " " + rawTitle)) {
+      if (requireVideo && !/\/video\/|animated|\.mp4(?:$|[?#])/i.test(rawHref + " " + rawTitle)) {
         return;
       }
       var idMatch = rawHref.match(/\/video\/([0-9]+)/i);
@@ -1274,7 +1296,7 @@ async function parseVideoGrid(options) {
           durationSec = dParts[0];
         }
       }
-      if (durationSec > 0 && durationSec < 120) {
+      if (minDuration > 0 && durationSec > 0 && durationSec < minDuration) {
         return;
       }
       var isHd = $el.find(".quality").length > 0;
@@ -1336,7 +1358,8 @@ async function get3DPostsForFilter(ctx, filter, page) {
           commonHeaders,
           signal,
           kvStore,
-          requireVideo: true
+          requireVideo: true,
+          minDuration: 120
         });
       }
     });
@@ -1383,7 +1406,8 @@ async function get3DPostsForFilter(ctx, filter, page) {
         commonHeaders,
         signal,
         kvStore,
-        requireVideo: true
+        requireVideo: true,
+        minDuration: 120
       });
     }
   });
@@ -1552,7 +1576,8 @@ var getSearchPostsImpl = async function(params) {
           commonHeaders,
           signal,
           kvStore,
-          requireVideo: true
+          requireVideo: true,
+          minDuration: 120
         });
       }
     });

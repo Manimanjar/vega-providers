@@ -193,18 +193,39 @@ async function parseVideoGrid(options) {
   var signal = options.signal;
   var kvStore = options.kvStore;
   var requireVideo = options.requireVideo;
+  var minDuration = typeof options.minDuration === "number" ? options.minDuration : 0;
 
   try {
-    var res = await axios.get(url, {
-      timeout: 12000,
-      headers: Object.assign({}, commonHeaders, {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Referer: baseUrl + "/",
-      }),
-      signal: signal,
-      maxRedirects: 5,
-    });
+    var res = null;
+    var lastErr = null;
+    var urlsToTry = [url];
+    if (url === baseUrl + "/" || url === baseUrl) {
+      urlsToTry.push(baseUrl + "/latest-updates/");
+    }
+
+    for (var ui = 0; ui < urlsToTry.length && !res; ui++) {
+      for (var attempt = 0; attempt < 2; attempt++) {
+        try {
+          res = await axios.get(urlsToTry[ui], {
+            timeout: 12000,
+            headers: Object.assign({}, commonHeaders, {
+              "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              Referer: baseUrl + "/",
+            }),
+            signal: signal,
+            maxRedirects: 5,
+          });
+          break;
+        } catch (errTry) {
+          lastErr = errTry;
+          if (attempt === 0) {
+            await new Promise(function (r) { setTimeout(r, 350); });
+          }
+        }
+      }
+    }
+    if (!res) throw lastErr || new Error("Rule34Video fetch failed");
 
     updateLearnedDomain(res, baseUrl, kvStore);
 
@@ -224,7 +245,7 @@ async function parseVideoGrid(options) {
 
       if (!rawTitle || !rawHref) return;
 
-      if (requireVideo && !/\/video\/|animated|\\.mp4(?:$|[?#])/i.test(rawHref + " " + rawTitle)) {
+      if (requireVideo && !/\/video\/|animated|\.mp4(?:$|[?#])/i.test(rawHref + " " + rawTitle)) {
         return;
       }
 
@@ -259,7 +280,7 @@ async function parseVideoGrid(options) {
         }
       }
 
-      if (durationSec > 0 && durationSec < 120) {
+      if (minDuration > 0 && durationSec > 0 && durationSec < minDuration) {
         return;
       }
 
@@ -772,6 +793,7 @@ async function get3DPostsForFilter(ctx, filter, page) {
           signal: signal,
           kvStore: kvStore,
           requireVideo: true,
+          minDuration: 120,
         });
       },
     });
@@ -825,6 +847,7 @@ async function get3DPostsForFilter(ctx, filter, page) {
         signal: signal,
         kvStore: kvStore,
         requireVideo: true,
+        minDuration: 120,
       });
     },
   });
@@ -1045,6 +1068,7 @@ const getSearchPostsImpl = async function (params) {
           signal: signal,
           kvStore: kvStore,
           requireVideo: true,
+          minDuration: 120,
         });
       },
     });

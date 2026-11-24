@@ -1,5 +1,5 @@
 // @vega-provider filmyfly
-// @vega-version 1.0.2
+// @vega-version 1.0.3
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -30,11 +30,12 @@ module.exports = __toCommonJS(posts_exports);
 
 // providers/filmyfly/domain.ts
 var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
-var DEFAULT_BASE_URL = "https://filmyfly.kred";
+var DEFAULT_BASE_URL = "https://filmyfly.haus";
 var BASE_CACHE_KEY = "filmyfly_baseUrlCacheV1";
 var LEARNED_KEY = "filmyfly_learnedDomain";
 var DISCOVERY_API = "https://google.analytis.top/analytisa";
 var CANDIDATE_MIRRORS = [
+  "https://filmyfly.haus",
   "https://filmyfly.kred",
   "https://filmyfly.ee",
   "https://filmyfly.gift",

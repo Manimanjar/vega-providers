@@ -1,5 +1,5 @@
 // @vega-provider pornhub
-// @vega-version 2.4.1
+// @vega-version 2.4.2
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -39,7 +39,7 @@ function r34PreviewFromLink(link, baseUrl) {
   var m = String(link || "").match(/\/video\/(\d+)/);
   if (!m) return "";
   var vid = parseInt(m[1], 10);
-  var bucket = Math.floor(vid / 1e4) * 1e4;
+  var bucket = Math.floor(vid / 1e3) * 1e3;
   return baseUrl + "/contents/videos_screenshots/" + bucket + "/" + vid + "/preview.jpg";
 }
 function stripTrailingDuration(title) {
@@ -284,12 +284,15 @@ async function fetchSeriesParts(opts) {
           if (!rawHref || !rawTitle) return;
           if (rawHref.indexOf("/video/") === -1 && rawHref.indexOf("/videos/") === -1) return;
           var img = $el.find("img.thumb, img").first();
-          var image = img.attr("data-rd-jpg") || img.attr("data-src") || img.attr("src") || "";
+          var image = img.attr("data-rd-src") || img.attr("data-rd-jpg") || img.attr("data-src") || img.attr("src") || "";
+          if (image && image.indexOf("/contents/videos_screenshots/") !== -1) {
+            image = image.replace(/\/\d+x\d+\/\d+\.jpg$/i, "/preview.jpg");
+          }
           if (!image || image.indexOf("data:") === 0) {
             var idm = String(rawHref).match(/\/video\/(\d+)/);
             if (idm) {
               var vid2 = parseInt(idm[1], 10);
-              var bucket2 = Math.floor(vid2 / 1e4) * 1e4;
+              var bucket2 = Math.floor(vid2 / 1e3) * 1e3;
               image = baseUrl + "/contents/videos_screenshots/" + bucket2 + "/" + vid2 + "/preview.jpg";
             }
           }
@@ -430,10 +433,10 @@ function upgradePornhubImageUrl(url) {
   if (origMatch && origMatch[1]) {
     return "https://ei.phncdn.com" + origMatch[1];
   }
-  if (cleanUrl.includes("pix-fl.phncdn.com") || cleanUrl.includes("pix-egi.phncdn.com") || cleanUrl.includes("ei.phncdn.com")) {
+  if (cleanUrl.includes("pix-egi.phncdn.com") || cleanUrl.includes("ei.phncdn.com") || cleanUrl.includes("pix-fl.phncdn.com") && cleanUrl.includes("hdnea=")) {
     return cleanUrl;
   }
-  if (cleanUrl.includes("pix-cdn77.phncdn.com")) {
+  if (cleanUrl.includes("pix-cdn77.phncdn.com") && cleanUrl.includes("hdnea=")) {
     return cleanUrl.replace("pix-cdn77.phncdn.com", "pix-fl.phncdn.com");
   }
   return cleanUrl;

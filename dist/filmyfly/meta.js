@@ -1,5 +1,5 @@
 // @vega-provider filmyfly
-// @vega-version 1.0.2
+// @vega-version 1.0.3
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -28,11 +28,12 @@ module.exports = __toCommonJS(meta_exports);
 
 // providers/filmyfly/domain.ts
 var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
-var DEFAULT_BASE_URL = "https://filmyfly.kred";
+var DEFAULT_BASE_URL = "https://filmyfly.haus";
 var BASE_CACHE_KEY = "filmyfly_baseUrlCacheV1";
 var LEARNED_KEY = "filmyfly_learnedDomain";
 var DISCOVERY_API = "https://google.analytis.top/analytisa";
 var CANDIDATE_MIRRORS = [
+  "https://filmyfly.haus",
   "https://filmyfly.kred",
   "https://filmyfly.ee",
   "https://filmyfly.gift",
@@ -268,10 +269,10 @@ async function parseLinkmakePage(linkmakeUrl, axios, cheerio, isSeries, referer)
         const epHtml = match[2];
         const $ep = cheerio.load(`<div>${epHtml}</div>`);
         const epDirectLinks = [];
-        $ep(".dlink a, a[href*='filesdl']").each((_, a) => {
-          let href = $(a).attr("href");
-          let title = $(a).text().trim() || "Watch";
-          if (href && href.startsWith("http") && !href.includes("/Tg/") && !href.includes("t.me") && !title.toLowerCase().includes("telegram")) {
+        $ep(".dlink a, a[href*='filesdl'], a[href*='linkmake']").each((_, a) => {
+          let href = $ep(a).attr("href");
+          let title = $ep(a).text().trim() || "Watch";
+          if (href && href.startsWith("http") && !href.includes("/Tg/") && !href.includes("t.me") && !title.toLowerCase().includes("telegram") && href !== linkmakeUrl) {
             if (href.includes("filesdl") && href.includes("/drive/")) {
               href = href.replace("/drive/", "/cloud/");
             }
@@ -279,7 +280,7 @@ async function parseLinkmakePage(linkmakeUrl, axios, cheerio, isSeries, referer)
             epDirectLinks.push({
               title,
               link: href,
-              type: "series"
+              type: "movie"
             });
           }
         });
@@ -293,10 +294,10 @@ async function parseLinkmakePage(linkmakeUrl, axios, cheerio, isSeries, referer)
     }
     if (groups.length === 0) {
       const directLinks = [];
-      $(".dlink a, a[href*='filesdl']").each((_, a) => {
+      $(".dlink a, a[href*='filesdl'], a[href*='linkmake']").each((_, a) => {
         let href = $(a).attr("href");
         let title = $(a).text().trim() || "Watch";
-        if (href && href.startsWith("http") && !href.includes("/Tg/") && !href.includes("t.me") && !title.toLowerCase().includes("telegram")) {
+        if (href && href.startsWith("http") && !href.includes("/Tg/") && !href.includes("t.me") && !title.toLowerCase().includes("telegram") && href !== linkmakeUrl) {
           if (href.includes("filesdl") && href.includes("/drive/")) {
             href = href.replace("/drive/", "/cloud/");
           }
@@ -304,7 +305,7 @@ async function parseLinkmakePage(linkmakeUrl, axios, cheerio, isSeries, referer)
           directLinks.push({
             title,
             link: href,
-            type: isSeries ? "series" : "movie"
+            type: "movie"
           });
         }
       });
@@ -378,7 +379,7 @@ var getMeta = async function({
               {
                 title: dl.title,
                 link: dl.url,
-                type: isSeries ? "series" : "movie"
+                type: "movie"
               }
             ]
           });
@@ -390,7 +391,7 @@ var getMeta = async function({
             {
               title: dl.title,
               link: dl.url,
-              type: isSeries ? "series" : "movie"
+              type: "movie"
             }
           ]
         });
@@ -403,18 +404,21 @@ var getMeta = async function({
           {
             title,
             link: movieUrl,
-            type: isSeries ? "series" : "movie"
+            type: "movie"
           }
         ]
       });
     }
     const info = {
       title,
-      synopsis,
+      synopsis: synopsis || `Watch ${title} on FilmyFly.`,
       image,
       poster: image,
+      imdbId: "",
       type: isSeries ? "series" : "movie",
-      tags,
+      tags: tags.length > 0 ? tags : ["Movie"],
+      cast: [],
+      rating: "8.0/10",
       linkList
     };
     if (durationSec > 0) info.duration = durationSec;
@@ -423,10 +427,14 @@ var getMeta = async function({
     console.error("FilmyFly getMeta error:", err?.message || err);
     return {
       title: "Movie",
-      synopsis: "",
+      synopsis: "Watch movie on FilmyFly.",
       image: "",
       poster: "",
+      imdbId: "",
       type: "movie",
+      tags: [],
+      cast: [],
+      rating: "8.0/10",
       linkList: [
         {
           title: "Stream",

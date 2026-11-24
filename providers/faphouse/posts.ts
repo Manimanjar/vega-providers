@@ -11,6 +11,8 @@ export function upgradeFaphouseImageUrl(
   srcset?: string,
   posterSrc?: string
 ): string {
+  // Always use signed high-res URLs as-is (data-poster-src or srcset 2x);
+  // never mutate dimensions in signed /a/<hmac>/... URLs (returns HTTP 405).
   if (posterSrc && typeof posterSrc === "string" && posterSrc.startsWith("http")) {
     return posterSrc;
   }
@@ -23,29 +25,16 @@ export function upgradeFaphouseImageUrl(
   if (!src || typeof src !== "string") return "";
   let clean = src.trim();
   if (clean.startsWith("//")) clean = "https:" + clean;
-
-  // Upgrade 352x220 preview thumbnail to 704x440 HD thumbnail
-  if (clean.includes("w:352") || clean.includes("w%3A352")) {
-    clean = clean
-      .replace(/w[:%]3A352/g, "w:704")
-      .replace(/h[:%]3A220/g, "h:440")
-      .replace(/w:352/g, "w:704")
-      .replace(/h:220/g, "h:440");
-  }
-
   return clean;
 }
 
-function parseCards($, baseUrl: string): Post[] {
+function parseCards($: any, baseUrl: string): Post[] {
   const posts: Post[] = [];
   const seen = new Set<string>();
 
-  $("a.t-vl, .t-m, .thumb.tv").each((_: any, el: any) => {
+  $("a.t-vl").each((_: any, el: any) => {
     const $el = $(el);
-    const linkEl = $el.is("a.t-vl")
-      ? $el
-      : $el.find("a.t-vl, a[href*='/videos/']").first();
-    let rawHref = linkEl.attr("href") || "";
+    let rawHref = $el.attr("href") || "";
     if (!rawHref) return;
 
     let cleanHref = rawHref.split("#")[0].trim();
@@ -67,34 +56,41 @@ function parseCards($, baseUrl: string): Post[] {
     const finalImage = upgradeFaphouseImageUrl(src, srcset, poster);
 
     // Title extraction
-    const parentContainer = $el.closest(".thumb, .t-m").parent();
+    const cardRoot = $el.closest(".thumb, .t-m").parent();
     let title =
-      parentContainer.find("a.t-tv").first().text().trim() ||
-      parentContainer.find(".t-tc").first().attr("title") ||
+      cardRoot.find("a.t-tv").first().text().trim() ||
+      cardRoot.find(".t-tc").first().attr("title") ||
       img.attr("alt") ||
-      linkEl.attr("title") ||
+      $el.attr("title") ||
       "";
     title = title.replace(/\s+/g, " ").trim();
 
-    // Duration and quality badge
+    // Duration and quality badge (combined into cornerTag so Vega displays both)
     const viEl = $el.find(".t-vi, .t-vb").first();
     const durationSpan = viEl.find("span").first().text().trim();
     const viText = viEl.text().trim();
-    let cornerTag = "";
+    let badge = "";
     if (/\b(?:4K|UHD)\b/i.test(viText) || /\b(?:4K|UHD)\b/i.test(title)) {
-      cornerTag = "4K";
+      badge = "4K";
     } else if (/\bVR\b/i.test(viText) || /\bVR\b/i.test(title)) {
-      cornerTag = "VR";
+      badge = "VR";
     } else if (/\bHD\b/i.test(viText)) {
-      cornerTag = "HD";
+      badge = "HD";
     }
+
+    const durationText = durationSpan || (/\d+:\d+/.test(viText) ? viText.match(/\d+:\d+/)?.[0] || "" : "");
+    const cornerTag = durationText
+      ? badge
+        ? `${durationText} • ${badge}`
+        : durationText
+      : badge || undefined;
 
     if (title && fullLink && finalImage) {
       posts.push({
         title,
         link: fullLink,
         image: finalImage,
-        tag: durationSpan || viText,
+        tag: durationText || badge || undefined,
         cornerTag,
       });
     }
@@ -103,20 +99,33 @@ function parseCards($, baseUrl: string): Post[] {
   return posts;
 }
 
+async function getCookieHeader(kvStore: any): Promise<string> {
+  let sessionCookie = "";
+  if (kvStore && typeof kvStore.get === "function") {
+    try {
+      sessionCookie = (await kvStore.get("sessionCookie")) || "";
+    } catch (e) {}
+  }
+  return sessionCookie
+    ? `siteMode=desktop; locale=en; ${String(sessionCookie).trim()}`
+    : "siteMode=desktop; locale=en;";
+}
+
 export const getPosts = async function ({
   filter,
   page,
+  signal,
   providerContext,
 }: {
   filter: string;
   page: number;
+  signal?: AbortSignal;
   providerContext: ProviderContext;
 }): Promise<Post[]> {
   const { axios, cheerio, kvStore } = providerContext;
   const baseUrl = await getBaseUrl(kvStore, axios);
   const p = Math.max(1, page || 1);
 
-  // Check 3D only setting
   let only3D = false;
   if (kvStore && typeof kvStore.get === "function") {
     try {
@@ -126,7 +135,18 @@ export const getPosts = async function ({
 
   let path = "/videos";
   if (only3D) {
-    path = "/c/3d/videos";
+    if (!filter || filter === "trending" || filter === "homepage" || filter === "/c/3d/videos") {
+      path = "/c/3d/videos";
+    } else {
+      const catSlug = filter
+        .replace(/^\/c\//, "")
+        .replace(/\/videos.*$/, "")
+        .replace(/^(?:genre|tag):/, "")
+        .replace(/^\//, "")
+        .replace(/[-_]+/g, " ")
+        .trim();
+      path = `/search/videos?q=${encodeURIComponent(catSlug ? `${catSlug} 3d` : "3d")}`;
+    }
   } else if (!filter || filter === "trending" || filter === "homepage") {
     path = p === 1 ? "/" : "/videos";
   } else if (filter.startsWith("/")) {
@@ -138,19 +158,20 @@ export const getPosts = async function ({
     path = `/c/${filter}/videos`;
   }
 
-  // Append pagination
   const sep = path.includes("?") ? "&" : "?";
   const finalPath = p > 1 ? `${path}${sep}page=${p}` : path;
   const requestUrl = `${baseUrl}${finalPath.startsWith("/") ? "" : "/"}${finalPath}`;
 
   try {
+    const cookieHeader = await getCookieHeader(kvStore);
     const res = await axios.get(requestUrl, {
       headers: {
         "User-Agent": DEFAULT_USER_AGENT,
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         Referer: `${baseUrl}/`,
-        Cookie: "siteMode=desktop; locale=en;",
+        Cookie: cookieHeader,
       },
+      signal,
       timeout: 10000,
       maxRedirects: 3,
     });
@@ -170,10 +191,12 @@ export const getPosts = async function ({
 export const getSearchPosts = async function ({
   searchQuery,
   page,
+  signal,
   providerContext,
 }: {
   searchQuery: string;
   page: number;
+  signal?: AbortSignal;
   providerContext: ProviderContext;
 }): Promise<Post[]> {
   const { axios, cheerio, kvStore } = providerContext;
@@ -183,7 +206,6 @@ export const getSearchPosts = async function ({
   let query = (searchQuery || "").trim();
   if (!query) return [];
 
-  // Check 3D only setting
   let only3D = false;
   if (kvStore && typeof kvStore.get === "function") {
     try {
@@ -202,13 +224,15 @@ export const getSearchPosts = async function ({
   const requestUrl = `${baseUrl}${finalPath}`;
 
   try {
+    const cookieHeader = await getCookieHeader(kvStore);
     const res = await axios.get(requestUrl, {
       headers: {
         "User-Agent": DEFAULT_USER_AGENT,
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         Referer: `${baseUrl}/`,
-        Cookie: "siteMode=desktop; locale=en;",
+        Cookie: cookieHeader,
       },
+      signal,
       timeout: 10000,
       maxRedirects: 3,
     });

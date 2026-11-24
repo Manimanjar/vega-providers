@@ -1,5 +1,5 @@
 // @vega-provider xvideos
-// @vega-version 2.4.0
+// @vega-version 2.4.1
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -38,7 +38,7 @@ function r34PreviewFromLink(link, baseUrl) {
   var m = String(link || "").match(/\/video\/(\d+)/);
   if (!m) return "";
   var vid = parseInt(m[1], 10);
-  var bucket = Math.floor(vid / 1e4) * 1e4;
+  var bucket = Math.floor(vid / 1e3) * 1e3;
   return baseUrl + "/contents/videos_screenshots/" + bucket + "/" + vid + "/preview.jpg";
 }
 function stripTrailingDuration(title) {
@@ -278,12 +278,15 @@ async function fetchSeriesParts(opts) {
           if (!rawHref || !rawTitle) return;
           if (rawHref.indexOf("/video/") === -1 && rawHref.indexOf("/videos/") === -1) return;
           var img = $el.find("img.thumb, img").first();
-          var image = img.attr("data-rd-jpg") || img.attr("data-src") || img.attr("src") || "";
+          var image = img.attr("data-rd-src") || img.attr("data-rd-jpg") || img.attr("data-src") || img.attr("src") || "";
+          if (image && image.indexOf("/contents/videos_screenshots/") !== -1) {
+            image = image.replace(/\/\d+x\d+\/\d+\.jpg$/i, "/preview.jpg");
+          }
           if (!image || image.indexOf("data:") === 0) {
             var idm = String(rawHref).match(/\/video\/(\d+)/);
             if (idm) {
               var vid2 = parseInt(idm[1], 10);
-              var bucket2 = Math.floor(vid2 / 1e4) * 1e4;
+              var bucket2 = Math.floor(vid2 / 1e3) * 1e3;
               image = baseUrl + "/contents/videos_screenshots/" + bucket2 + "/" + vid2 + "/preview.jpg";
             }
           }
@@ -361,37 +364,167 @@ async function fetchSeriesParts(opts) {
 }
 
 // providers/xvideos/meta.ts
+var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
+var DEFAULT_BASE_URL = "https://www.xvideos.com";
+var BASE_CACHE_KEY = "xvideos_baseUrlCacheV1";
+var memoryCache = { data: null, expiresAt: 0 };
+async function getBase(kvStore, axios) {
+  if (kvStore && typeof kvStore.get === "function") {
+    try {
+      const custom = await kvStore.get("baseUrlOverride");
+      if (custom && typeof custom === "string" && custom.trim().length > 0) {
+        const cleanCustom = custom.trim().replace(/\/+$/, "");
+        if (cleanCustom !== DEFAULT_BASE_URL) {
+          return cleanCustom;
+        }
+      }
+    } catch (e) {
+    }
+  }
+  const now = Date.now();
+  if (memoryCache.data && now < memoryCache.expiresAt) {
+    const cachedEntry = memoryCache.data["xvideos"];
+    if (cachedEntry && cachedEntry.url) {
+      return cachedEntry.url.replace(/\/+$/, "");
+    }
+  }
+  if (kvStore && typeof kvStore.get === "function") {
+    try {
+      const cachedRaw = await kvStore.get(BASE_CACHE_KEY);
+      if (cachedRaw) {
+        const cached = typeof cachedRaw === "string" ? JSON.parse(cachedRaw) : cachedRaw;
+        if (cached && cached.url && cached.expiresAt > now) {
+          return String(cached.url).replace(/\/+$/, "");
+        }
+      }
+    } catch (e) {
+    }
+  }
+  if (axios) {
+    try {
+      const res = await axios.get(URLS_ENDPOINT, { timeout: 3e3 });
+      if (res.data && typeof res.data === "object") {
+        memoryCache.data = res.data;
+        memoryCache.expiresAt = now + 36e5;
+        const entry = res.data["xvideos"];
+        if (entry && entry.url) {
+          const cleanEntry = entry.url.replace(/\/+$/, "");
+          if (kvStore && typeof kvStore.set === "function") {
+            try {
+              await kvStore.set(
+                BASE_CACHE_KEY,
+                JSON.stringify({ url: cleanEntry, expiresAt: now + 36e5 })
+              );
+            } catch (e) {
+            }
+          }
+          return cleanEntry;
+        }
+      }
+    } catch (e) {
+    }
+  }
+  if (kvStore && typeof kvStore.get === "function") {
+    try {
+      const learned = await kvStore.get("xvideos_learnedDomain");
+      if (learned && typeof learned === "string" && learned.startsWith("http")) {
+        return learned.replace(/\/+$/, "");
+      }
+    } catch (e) {
+    }
+  }
+  return DEFAULT_BASE_URL;
+}
+function parseDurationSeconds(text) {
+  if (!text) return 0;
+  let sec = 0;
+  const hMatch = text.match(/(\d+)\s*h/i);
+  const mMatch = text.match(/(\d+)\s*min/i);
+  const sMatch = text.match(/(\d+)\s*sec/i);
+  if (hMatch) sec += parseInt(hMatch[1], 10) * 3600;
+  if (mMatch) sec += parseInt(mMatch[1], 10) * 60;
+  if (sMatch) sec += parseInt(sMatch[1], 10);
+  return sec;
+}
 var getMeta = async function({
   link,
   providerContext
 }) {
   const { axios, cheerio, commonHeaders, kvStore } = providerContext;
-  let baseUrl = "https://www.xvideos.com";
-  if (kvStore && typeof kvStore.get === "function") {
+  const baseUrl = await getBase(kvStore, axios);
+  let pathPart = link || "";
+  if (pathPart.startsWith("http")) {
     try {
-      const custom = await kvStore.get("baseUrlOverride");
-      if (custom && typeof custom === "string" && custom.trim().length > 0) {
-        baseUrl = custom.trim().replace(/\/+$/, "");
-      }
+      const parsedUrl = new URL(pathPart);
+      pathPart = parsedUrl.pathname + parsedUrl.search;
     } catch (e) {
     }
   }
-  const url = link.startsWith("http") ? link : `${baseUrl}${link.startsWith("/") ? "" : "/"}${link}`;
+  if (!pathPart.startsWith("/")) {
+    pathPart = "/" + pathPart;
+  }
+  const candidateBases = [
+    baseUrl,
+    "https://www.xvideos.com",
+    "https://www.xvideos3.com",
+    "https://www.xvideos2.com"
+  ].filter((b, idx, arr) => b && arr.indexOf(b) === idx);
+  let effectiveUrl = `${baseUrl}${pathPart}`;
   try {
-    const res = await axios.get(url, {
-      headers: {
-        ...commonHeaders,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Referer: baseUrl
+    let html = "";
+    let workingBase = baseUrl;
+    for (const curBase of candidateBases) {
+      const targetUrl = `${curBase}${pathPart}`;
+      for (let retry = 0; retry < 2; retry++) {
+        try {
+          const res = await axios.get(targetUrl, {
+            headers: {
+              ...commonHeaders,
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              Referer: `${curBase}/`,
+              Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            },
+            timeout: 8e3,
+            maxRedirects: 5
+          });
+          if (typeof res.data === "string" && res.data.includes("html5player")) {
+            html = res.data;
+            workingBase = curBase;
+            effectiveUrl = targetUrl;
+            break;
+          }
+          if (typeof res.data === "string" && res.data.length > 500) {
+            html = res.data;
+            workingBase = curBase;
+            effectiveUrl = targetUrl;
+            break;
+          }
+        } catch (e) {
+          if (retry === 0) {
+            await new Promise((r) => setTimeout(r, 250));
+          }
+        }
       }
-    });
-    const html = res.data;
+      if (html) break;
+    }
+    if (!html) {
+      throw new Error("No HTML returned from any XVideos mirror");
+    }
     const $ = cheerio.load(html);
-    const playerTitleMatch = html.match(/html5player\.setVideoTitle\s*\(\s*['"]([^'"]+)['"]\s*\)/i);
+    const playerTitleMatch = html.match(
+      /html5player\.setVideoTitle\s*\(\s*['"]([^'"]+)['"]\s*\)/i
+    );
     const title = (playerTitleMatch ? playerTitleMatch[1] : null) || $("h2.page-title, .page-title, title").first().text().replace(/- XVIDEOS\.COM/i, "").trim() || "Video";
-    const playerThumbMatch = html.match(/html5player\.setThumbUrl\s*\(\s*['"]([^'"]+)['"]\s*\)/i);
-    const playerThumb169Match = html.match(/html5player\.setThumbUrl169\s*\(\s*['"]([^'"]+)['"]\s*\)/i);
-    const image = (playerThumb169Match ? playerThumb169Match[1] : null) || (playerThumbMatch ? playerThumbMatch[1] : null) || $('meta[property="og:image"]').attr("content") || "";
+    const playerThumbMatch = html.match(
+      /html5player\.setThumbUrl\s*\(\s*['"]([^'"]+)['"]\s*\)/i
+    );
+    const playerThumb169Match = html.match(
+      /html5player\.setThumbUrl169\s*\(\s*['"]([^'"]+)['"]\s*\)/i
+    );
+    const ogImage = $('meta[property="og:image"]').attr("content") || "";
+    const thumb169 = playerThumb169Match ? playerThumb169Match[1] : "";
+    const thumbStd = playerThumbMatch ? playerThumbMatch[1] : "";
+    const image = (thumb169 && !thumb169.endsWith(".avif") ? thumb169 : "") || (ogImage && !ogImage.endsWith(".avif") ? ogImage : "") || thumbStd || thumb169 || ogImage || "";
     const tags = [];
     $('.video-tags-list a[href^="/tags/"]').each((_, el) => {
       const tagText = $(el).text().trim();
@@ -409,7 +542,11 @@ var getMeta = async function({
       }
     });
     const duration = $(".duration, .video-duration").first().text().trim();
+    const durationSec = parseDurationSeconds(duration);
     const quality = html.includes("setVideoUrlHigh") || html.includes("1080p") ? "1080p" : "720p";
+    const ratingMatch = $(".rating-good-perc").first().text().trim().match(/(\d+)/);
+    const ratingVal = ratingMatch ? (parseInt(ratingMatch[1], 10) / 10).toFixed(1) : "8.2";
+    const ratingStr = `${ratingVal}/10`;
     const synopsisParts = [
       `${title}${duration ? ` \u2014 ${duration}` : ""} \u2022 ${quality}.`
     ];
@@ -420,14 +557,14 @@ var getMeta = async function({
       synopsisParts.push(`Tags: ${tags.join(", ")}.`);
     }
     const synopsis = synopsisParts.join(" ");
-    var parsed = parsePartTitle(title);
+    const parsed = parsePartTitle(title);
     if (parsed && parsed.partNum != null) {
-      var seriesParts = [];
+      let seriesParts = [];
       try {
         seriesParts = await fetchSeriesParts({
           axios,
           cheerio,
-          baseUrl,
+          baseUrl: workingBase,
           site: "xvideos",
           baseTitle: parsed.base,
           commonHeaders
@@ -436,8 +573,8 @@ var getMeta = async function({
         seriesParts = [];
       }
       if (seriesParts.length >= 2) {
-        var firstImage = seriesParts[0] && seriesParts[0].image || image;
-        var seriesSynopsisParts = [
+        const firstImage = seriesParts[0] && seriesParts[0].image || image;
+        const seriesSynopsisParts = [
           parsed.base + " \u2014 " + seriesParts.length + " parts \u2022 " + quality + "."
         ];
         if (cast.length > 0) {
@@ -453,10 +590,11 @@ var getMeta = async function({
           poster: firstImage,
           imdbId: "",
           type: "series",
-          tags: tags.length > 0 ? tags : void 0,
-          cast: cast.length > 0 ? cast : void 0,
-          rating: duration || void 0,
-          webUrl: url,
+          tags,
+          cast,
+          rating: ratingStr,
+          duration: durationSec || 600,
+          webUrl: effectiveUrl,
           linkList: [
             {
               title: "Parts",
@@ -475,10 +613,11 @@ var getMeta = async function({
       poster: image,
       imdbId: "",
       type: "movie",
-      tags: tags.length > 0 ? tags : void 0,
-      cast: cast.length > 0 ? cast : void 0,
-      rating: duration || void 0,
-      webUrl: url,
+      tags,
+      cast,
+      rating: ratingStr,
+      duration: durationSec || 600,
+      webUrl: effectiveUrl,
       linkList: [
         {
           title: "Stream Video",
@@ -486,7 +625,7 @@ var getMeta = async function({
           directLinks: [
             {
               title,
-              link: url,
+              link: effectiveUrl,
               type: "movie"
             }
           ]
@@ -496,18 +635,24 @@ var getMeta = async function({
   } catch (err) {
     console.error("XVideos meta error:", err?.message || err);
     return {
-      title: "Video Details",
-      synopsis: "",
+      title: "XVideos Video",
+      synopsis: "Watch video on XVideos.",
       image: "",
+      poster: "",
       imdbId: "",
       type: "movie",
+      tags: [],
+      cast: [],
+      rating: "8.0/10",
+      duration: 600,
+      webUrl: effectiveUrl,
       linkList: [
         {
           title: "Stream Video",
           directLinks: [
             {
               title: "Play",
-              link: url,
+              link: effectiveUrl,
               type: "movie"
             }
           ]

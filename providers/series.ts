@@ -52,14 +52,14 @@ function wordCount(text) {
 
 // The video's own poster, built from its numeric ID in the link:
 // contents/videos_screenshots/<bucket>/<id>/preview.jpg where
-// bucket = floor(id / 10000) * 10000. Used when a card's image is a
+// bucket = floor(id / 1000) * 1000. Used when a card's image is a
 // lazy-load 1px placeholder (data: URI) or missing — the card then
 // still gets a real thumbnail instead of an invisible one.
 function r34PreviewFromLink(link, baseUrl) {
   var m = String(link || "").match(/\/video\/(\d+)/);
   if (!m) return "";
   var vid = parseInt(m[1], 10);
-  var bucket = Math.floor(vid / 10000) * 10000;
+  var bucket = Math.floor(vid / 1000) * 1000;
   return baseUrl + "/contents/videos_screenshots/" + bucket + "/" + vid + "/preview.jpg";
 }
 
@@ -506,15 +506,19 @@ export async function fetchSeriesParts(opts) {
           if (rawHref.indexOf("/video/") === -1 && rawHref.indexOf("/videos/") === -1) return;
           var img = $el.find("img.thumb, img").first();
           var image =
+            img.attr("data-rd-src") ||
             img.attr("data-rd-jpg") ||
             img.attr("data-src") ||
             img.attr("src") ||
             "";
+          if (image && image.indexOf("/contents/videos_screenshots/") !== -1) {
+            image = image.replace(/\/\d+x\d+\/\d+\.jpg$/i, "/preview.jpg");
+          }
           if (!image || image.indexOf("data:") === 0) {
             var idm = String(rawHref).match(/\/video\/(\d+)/);
             if (idm) {
               var vid2 = parseInt(idm[1], 10);
-              var bucket2 = Math.floor(vid2 / 10000) * 10000;
+              var bucket2 = Math.floor(vid2 / 1000) * 1000;
               image = baseUrl + "/contents/videos_screenshots/" + bucket2 + "/" + vid2 + "/preview.jpg";
             }
           }

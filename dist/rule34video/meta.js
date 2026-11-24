@@ -1,5 +1,5 @@
 // @vega-provider rule34video
-// @vega-version 2.4.0
+// @vega-version 2.4.1
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -38,7 +38,7 @@ function r34PreviewFromLink(link, baseUrl) {
   var m = String(link || "").match(/\/video\/(\d+)/);
   if (!m) return "";
   var vid = parseInt(m[1], 10);
-  var bucket = Math.floor(vid / 1e4) * 1e4;
+  var bucket = Math.floor(vid / 1e3) * 1e3;
   return baseUrl + "/contents/videos_screenshots/" + bucket + "/" + vid + "/preview.jpg";
 }
 function stripTrailingDuration(title) {
@@ -278,12 +278,15 @@ async function fetchSeriesParts(opts) {
           if (!rawHref || !rawTitle) return;
           if (rawHref.indexOf("/video/") === -1 && rawHref.indexOf("/videos/") === -1) return;
           var img = $el.find("img.thumb, img").first();
-          var image = img.attr("data-rd-jpg") || img.attr("data-src") || img.attr("src") || "";
+          var image = img.attr("data-rd-src") || img.attr("data-rd-jpg") || img.attr("data-src") || img.attr("src") || "";
+          if (image && image.indexOf("/contents/videos_screenshots/") !== -1) {
+            image = image.replace(/\/\d+x\d+\/\d+\.jpg$/i, "/preview.jpg");
+          }
           if (!image || image.indexOf("data:") === 0) {
             var idm = String(rawHref).match(/\/video\/(\d+)/);
             if (idm) {
               var vid2 = parseInt(idm[1], 10);
-              var bucket2 = Math.floor(vid2 / 1e4) * 1e4;
+              var bucket2 = Math.floor(vid2 / 1e3) * 1e3;
               image = baseUrl + "/contents/videos_screenshots/" + bucket2 + "/" + vid2 + "/preview.jpg";
             }
           }
@@ -449,11 +452,14 @@ var getMeta = async function({
       const firstImage2 = rawFirstSrc ? rawFirstSrc.includes("/contents/videos_screenshots/") ? rawFirstSrc.replace(/\/\d+x\d+\/\d+\.jpg$/i, "/preview.jpg") : rawFirstSrc : `${baseUrl}/apple-touch-icon.png`;
       return {
         title: tagTitle,
-        synopsis: "",
+        synopsis: `Watch ${tagTitle} videos on Rule34Video.`,
         image: firstImage2,
         poster: firstImage2,
         imdbId: "",
         type: "series",
+        tags: [],
+        cast: [],
+        rating: "8.5/10",
         linkList: [
           {
             title: "Videos",
@@ -533,8 +539,9 @@ var getMeta = async function({
           poster: firstImage,
           imdbId: "",
           type: "series",
-          tags: tags.length > 0 ? tags : void 0,
-          rating: quality,
+          tags,
+          cast: [],
+          rating: "8.5/10",
           webUrl: url,
           linkList: [
             {
@@ -554,8 +561,9 @@ var getMeta = async function({
       poster: image,
       imdbId: "",
       type: "movie",
-      tags: tags.length > 0 ? tags : void 0,
-      rating: quality,
+      tags,
+      cast: [],
+      rating: "8.5/10",
       webUrl: url,
       linkList: [
         {
@@ -574,11 +582,15 @@ var getMeta = async function({
   } catch (err) {
     console.error("Rule34Video meta error:", err?.message || err);
     return {
-      title: "Video Details",
-      synopsis: "",
+      title: "Rule34Video",
+      synopsis: "Watch video on Rule34Video.",
       image: "",
+      poster: "",
       imdbId: "",
       type: "movie",
+      tags: [],
+      cast: [],
+      rating: "8.0/10",
       linkList: [
         {
           title: "Stream Video",

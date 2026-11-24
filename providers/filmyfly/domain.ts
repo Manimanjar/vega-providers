@@ -2,12 +2,13 @@
 
 const URLS_ENDPOINT =
   "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
-const DEFAULT_BASE_URL = "https://filmyfly.kred";
+const DEFAULT_BASE_URL = "https://filmyfly.haus";
 const BASE_CACHE_KEY = "filmyfly_baseUrlCacheV1";
 const LEARNED_KEY = "filmyfly_learnedDomain";
 const DISCOVERY_API = "https://google.analytis.top/analytisa";
 
 const CANDIDATE_MIRRORS = [
+  "https://filmyfly.haus",
   "https://filmyfly.kred",
   "https://filmyfly.ee",
   "https://filmyfly.gift",

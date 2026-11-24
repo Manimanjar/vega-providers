@@ -1,5 +1,5 @@
 // @vega-provider xvideos
-// @vega-version 2.4.0
+// @vega-version 2.4.1
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -567,7 +567,7 @@ async function getPooledSearchPage(opts) {
         if (pagePosts.length === 0) {
           try {
             await new Promise(function(r) {
-              setTimeout(r, 1e3);
+              setTimeout(r, 400);
             });
             pagePosts = await fetchTermPage(currentTerm, curTermPage) || [];
           } catch (e) {
@@ -576,7 +576,7 @@ async function getPooledSearchPage(opts) {
         }
         if (pagePosts.length === 0) {
           emptyStreak++;
-          if (emptyStreak >= 2) {
+          if (emptyStreak >= 1) {
             emptyStreak = 0;
             curTermIdx++;
             curTermPage = 1;
@@ -593,7 +593,7 @@ async function getPooledSearchPage(opts) {
         curTermPage++;
         if (pool.length === before) {
           dupStreak++;
-          if (dupStreak >= 15) {
+          if (dupStreak >= 5) {
             dupStreak = 0;
             curTermIdx++;
             curTermPage = 1;
@@ -616,7 +616,7 @@ async function getPooledSearchPage(opts) {
         if (pagePosts.length === 0) {
           try {
             await new Promise(function(r) {
-              setTimeout(r, 1200);
+              setTimeout(r, 400);
             });
             pagePosts = await fetchSitePage(sp) || [];
           } catch (e) {
@@ -626,7 +626,7 @@ async function getPooledSearchPage(opts) {
         fetchedPages = sp;
         if (pagePosts.length === 0) {
           emptyStreak++;
-          if (emptyStreak >= 5) break;
+          if (emptyStreak >= 2) break;
           continue;
         }
         emptyStreak = 0;
@@ -634,7 +634,7 @@ async function getPooledSearchPage(opts) {
         pool = dedupePosts(pool.concat(pagePosts));
         if (pool.length === before) {
           dupStreak++;
-          if (dupStreak >= 15) break;
+          if (dupStreak >= 5) break;
         } else {
           dupStreak = 0;
         }
@@ -646,7 +646,7 @@ async function getPooledSearchPage(opts) {
     var start;
     var end;
     if (isFirstServe) {
-      start = nextStart;
+      start = nextStart > 0 ? nextStart : (page - 1) * PAGE;
       end = start + PAGE;
       pageStarts[page] = start;
     } else {
@@ -1216,7 +1216,7 @@ async function parseVideoGrid(options) {
   var commonHeaders = options.commonHeaders;
   var signal = options.signal;
   var kvStore = options.kvStore;
-  var candidateBases = [baseUrl, "https://www.xvideos2.com", "https://www.xvideos3.com"];
+  var candidateBases = [baseUrl, "https://www.xvideos.com", "https://www.xvideos3.com", "https://www.xvideos2.com"];
   var seenBases = {};
   var uniqueBases = [];
   for (var b = 0; b < candidateBases.length; b++) {
@@ -1229,6 +1229,7 @@ async function parseVideoGrid(options) {
   try {
     var res = null;
     var lastErr = null;
+    var activeBase = baseUrl;
     for (var bi = 0; bi < uniqueBases.length; bi++) {
       var currentBase = uniqueBases[bi];
       var targetUrl = url;
@@ -1250,13 +1251,15 @@ async function parseVideoGrid(options) {
             signal,
             maxRedirects: 5
           });
+          activeBase = currentBase;
           break;
         } catch (e) {
           lastErr = e;
           var status = e && e.response && e.response.status;
-          if (status === 429 && attempt === 0) {
+          var code = e && e.code;
+          if ((status === 429 || code === "ECONNRESET" || code === "ETIMEDOUT") && attempt === 0) {
             await new Promise(function(resolve) {
-              setTimeout(resolve, 1500);
+              setTimeout(resolve, status === 429 ? 1200 : 250);
             });
             continue;
           }
@@ -1266,7 +1269,7 @@ async function parseVideoGrid(options) {
       if (res && res.status === 200) break;
     }
     if (!res) throw lastErr || new Error("no response from any mirror");
-    updateLearnedDomain(res, baseUrl, kvStore);
+    updateLearnedDomain(res, activeBase, kvStore);
     var html = res.data;
     var $ = cheerio.load(html);
     var posts = [];
@@ -1294,7 +1297,8 @@ async function parseVideoGrid(options) {
       }
       seenVideoIds.add(videoId);
       var img = $el.find("img").first();
-      var image = img.attr("data-src") || img.attr("data-srcset") || img.attr("src") || "";
+      var rawSrcset = (img.attr("data-srcset") || "").split(",")[0].trim().split(/\s+/)[0];
+      var image = img.attr("data-src") || rawSrcset || img.attr("src") || "";
       var duration = $el.find(".duration, .video-duration").first().text().trim();
       var durationSec = 0;
       if (duration) {
@@ -1308,7 +1312,7 @@ async function parseVideoGrid(options) {
       var hdTag = $el.find(".video-hd-mark").first().text().trim();
       var durationText = formatDuration(durationSec) || duration || void 0;
       var cornerTag = durationText ? hdTag ? durationText + " \u2022 " + hdTag : durationText : hdTag || void 0;
-      var absoluteLink = rawHref.startsWith("http") ? rawHref : baseUrl + (rawHref.startsWith("/") ? "" : "/") + rawHref;
+      var absoluteLink = rawHref.startsWith("http") ? rawHref : activeBase + (rawHref.startsWith("/") ? "" : "/") + rawHref;
       posts.push({
         title: rawTitle,
         link: absoluteLink,
@@ -1430,7 +1434,7 @@ var getPostsImpl = async function(params) {
     });
   }
   if (category && category.mode === "random_feed") {
-    var targetUrl = page === 1 ? baseUrl + "/" : baseUrl + "/new/" + page + "/";
+    var targetUrl = page <= 1 ? baseUrl + "/" : baseUrl + "/new/" + (page - 1) + "/";
     return parseVideoGrid({
       url: targetUrl,
       baseUrl,

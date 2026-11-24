@@ -3,6 +3,7 @@ import { Stream, ProviderContext } from "../types";
 const URLS_ENDPOINT =
   "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
 const DEFAULT_BASE_URL = "https://www.xvideos.com";
+const BASE_CACHE_KEY = "xvideos_baseUrlCacheV1";
 let memoryCache = { data: null as any, expiresAt: 0 };
 
 async function getBase(kvStore: any, axios: any): Promise<string> {
@@ -26,15 +27,37 @@ async function getBase(kvStore: any, axios: any): Promise<string> {
     }
   }
 
+  if (kvStore && typeof kvStore.get === "function") {
+    try {
+      const cachedRaw = await kvStore.get(BASE_CACHE_KEY);
+      if (cachedRaw) {
+        const cached =
+          typeof cachedRaw === "string" ? JSON.parse(cachedRaw) : cachedRaw;
+        if (cached && cached.url && cached.expiresAt > now) {
+          return String(cached.url).replace(/\/+$/, "");
+        }
+      }
+    } catch (e) {}
+  }
+
   if (axios) {
     try {
-      const res = await axios.get(URLS_ENDPOINT, { timeout: 4000 });
+      const res = await axios.get(URLS_ENDPOINT, { timeout: 3000 });
       if (res.data && typeof res.data === "object") {
         memoryCache.data = res.data;
         memoryCache.expiresAt = now + 3600000;
         const entry = res.data["xvideos"];
         if (entry && entry.url) {
-          return entry.url.replace(/\/+$/, "");
+          const cleanEntry = entry.url.replace(/\/+$/, "");
+          if (kvStore && typeof kvStore.set === "function") {
+            try {
+              await kvStore.set(
+                BASE_CACHE_KEY,
+                JSON.stringify({ url: cleanEntry, expiresAt: now + 3600000 })
+              );
+            } catch (e) {}
+          }
+          return cleanEntry;
         }
       }
     } catch (e) {}
@@ -67,32 +90,75 @@ export const getStream = async function ({
 }): Promise<Stream[]> {
   const { axios, commonHeaders, kvStore } = providerContext;
   const baseUrl = await getBase(kvStore, axios);
-  const videoPageUrl = link.startsWith("http")
-    ? link
-    : `${baseUrl}${link.startsWith("/") ? "" : "/"}${link}`;
 
-  const pageHeaders = {
-    ...commonHeaders,
-    Referer: baseUrl,
-    "User-Agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  };
+  let pathPart = link || "";
+  if (pathPart.startsWith("http")) {
+    try {
+      const parsed = new URL(pathPart);
+      pathPart = parsed.pathname + parsed.search;
+    } catch (e) {}
+  }
+  if (!pathPart.startsWith("/")) {
+    pathPart = "/" + pathPart;
+  }
+
+  const candidateBases = [
+    baseUrl,
+    "https://www.xvideos.com",
+    "https://www.xvideos3.com",
+    "https://www.xvideos2.com",
+  ].filter((b, idx, arr) => b && arr.indexOf(b) === idx);
+
+  const ua =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
   const streamHeaders = {
-    "User-Agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": ua,
   };
 
   try {
-    const res = await axios.get(videoPageUrl, {
-      headers: pageHeaders,
-      signal,
-      maxRedirects: 5,
-    });
-    const html = res.data;
+    let html = "";
+    let workingBase = baseUrl;
+
+    for (const curBase of candidateBases) {
+      const targetUrl = `${curBase}${pathPart}`;
+      for (let retry = 0; retry < 2; retry++) {
+        try {
+          const res = await axios.get(targetUrl, {
+            headers: {
+              ...commonHeaders,
+              Referer: `${curBase}/`,
+              "User-Agent": ua,
+            },
+            signal,
+            timeout: 8000,
+            maxRedirects: 5,
+          });
+          if (typeof res.data === "string" && res.data.includes("html5player")) {
+            html = res.data;
+            workingBase = curBase;
+            break;
+          }
+        } catch (e) {
+          if (retry === 0) {
+            await new Promise((r) => setTimeout(r, 250));
+          }
+        }
+      }
+      if (html) break;
+    }
+
+    if (!html) return [];
+
+    const pageHeaders = {
+      ...commonHeaders,
+      Referer: `${workingBase}/`,
+      "User-Agent": ua,
+    };
+
     const streams: Stream[] = [];
 
-    // 1. High Speed Direct MP4 CDN streams (benchmarked up to 60+ Mbps)
+    // 1. High Speed Direct MP4 CDN streams
     const highMatch = html.match(
       /html5player\.setVideoUrlHigh\s*\(\s*['"]([^'"]+)['"]\s*\)/i
     );
@@ -110,85 +176,90 @@ export const getStream = async function ({
 
     if (hlsMatch && hlsMatch[1]) {
       const rawHlsUrl = hlsMatch[1];
-      masterHlsUrl = rawHlsUrl.replace(/\/hls_low\.m3u8/i, "/hls.m3u8");
-      const baseUrlDir = masterHlsUrl.substring(
-        0,
-        masterHlsUrl.lastIndexOf("/") + 1
-      );
+      const upgradedHlsUrl = rawHlsUrl.replace(/\/hls_low\.m3u8/i, "/hls.m3u8");
+      masterHlsUrl = upgradedHlsUrl;
 
-      try {
-        const hlsRes = await axios.get(masterHlsUrl, {
-          headers: pageHeaders,
-          timeout: 5000,
-          signal,
-        });
-        const playlist = hlsRes.data;
+      let playlist: string | null = null;
+      for (const tryUrl of [upgradedHlsUrl, rawHlsUrl].filter((u, i, a) => u && a.indexOf(u) === i)) {
+        try {
+          const hlsRes = await axios.get(tryUrl, {
+            headers: pageHeaders,
+            timeout: 5000,
+            signal,
+          });
+          if (typeof hlsRes.data === "string" && hlsRes.data.includes("#EXTM3U")) {
+            playlist = hlsRes.data;
+            masterHlsUrl = tryUrl;
+            break;
+          }
+        } catch (e) {}
+      }
 
-        if (typeof playlist === "string" && playlist.includes("#EXTM3U")) {
-          const lines = playlist.split(/\r?\n/);
-          const variants: {
-            name: string;
-            url: string;
-            quality: string;
-            bandwidth: number;
-          }[] = [];
+      if (playlist) {
+        const baseUrlDir = masterHlsUrl.substring(
+          0,
+          masterHlsUrl.lastIndexOf("/") + 1
+        );
+        const lines = playlist.split(/\r?\n/);
+        const variants: {
+          name: string;
+          url: string;
+          quality: string;
+          bandwidth: number;
+        }[] = [];
 
-          for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            if (line.startsWith("#EXT-X-STREAM-INF:")) {
-              const nextLine = lines[i + 1]?.trim();
-              if (nextLine && !nextLine.startsWith("#")) {
-                const subUrl = nextLine.startsWith("http")
-                  ? nextLine
-                  : `${baseUrlDir}${nextLine}`;
-                const nameMatch = line.match(/NAME="([^"]+)"/i);
-                const resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/i);
-                const bwMatch = line.match(/BANDWIDTH=(\d+)/i);
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          if (line.startsWith("#EXT-X-STREAM-INF:")) {
+            const nextLine = lines[i + 1]?.trim();
+            if (nextLine && !nextLine.startsWith("#")) {
+              const subUrl = nextLine.startsWith("http")
+                ? nextLine
+                : `${baseUrlDir}${nextLine}`;
+              const nameMatch = line.match(/NAME="([^"]+)"/i);
+              const resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/i);
+              const bwMatch = line.match(/BANDWIDTH=(\d+)/i);
 
-                const height = resMatch ? resMatch[2] : "";
-                const qualityName = nameMatch
-                  ? nameMatch[1]
-                  : height
-                  ? `${height}p`
-                  : "HD";
-                const qualNumber = qualityName.replace(/[^0-9]/g, "");
-                const bandwidth = bwMatch ? parseInt(bwMatch[1], 10) : 0;
+              const height = resMatch ? resMatch[2] : "";
+              const qualityName = nameMatch
+                ? nameMatch[1]
+                : height
+                ? `${height}p`
+                : "HD";
+              const qualNumber = qualityName.replace(/[^0-9]/g, "");
+              const bandwidth = bwMatch ? parseInt(bwMatch[1], 10) : 0;
 
-                variants.push({
-                  name: qualityName,
-                  url: subUrl,
-                  quality: qualNumber || "1080",
-                  bandwidth,
-                });
-              }
+              variants.push({
+                name: qualityName,
+                url: subUrl,
+                quality: qualNumber || "1080",
+                bandwidth,
+              });
             }
           }
-
-          variants.sort((a, b) => b.bandwidth - a.bandwidth);
-
-          for (const v of variants) {
-            let label = `Direct ${v.name} (HLS Full Bitrate)`;
-            if (v.quality === "2160") label = "Direct 4K Ultra HD (HLS)";
-            else if (v.quality === "1440") label = "Direct 2K QHD (HLS)";
-            else if (v.quality === "1080") label = "Direct 1080p Full HD (HLS)";
-            else if (v.quality === "720") label = "Direct 720p HD (HLS)";
-
-            hlsVariants.push({
-              server: label,
-              link: v.url,
-              type: "m3u8",
-              quality: v.quality,
-              headers: streamHeaders,
-            });
-          }
         }
-      } catch (err: any) {
-        console.error("Master HLS fetch error:", err?.message || err);
+
+        variants.sort((a, b) => b.bandwidth - a.bandwidth);
+
+        for (const v of variants) {
+          let label = `Direct ${v.name} (HLS Full Bitrate)`;
+          if (v.quality === "2160") label = "Direct 4K Ultra HD (HLS)";
+          else if (v.quality === "1440") label = "Direct 2K QHD (HLS)";
+          else if (v.quality === "1080") label = "Direct 1080p Full HD (HLS)";
+          else if (v.quality === "720") label = "Direct 720p HD (HLS)";
+
+          hlsVariants.push({
+            server: label,
+            link: v.url,
+            type: "m3u8",
+            quality: v.quality,
+            headers: streamHeaders,
+          });
+        }
       }
     }
 
     if (isDownload) {
-      // For downloads, prioritize high-speed Direct MP4
       if (highMatch && highMatch[1]) {
         streams.push({
           server: "Direct MP4 (High Speed 60Mbps)",
@@ -218,8 +289,6 @@ export const getStream = async function ({
       }
       streams.push(...hlsVariants);
     } else {
-      // For instant, buttery-smooth playback with ZERO buffering:
-      // 1. Auto Adaptive Master HLS FIRST (allows ExoPlayer adaptive bitrate)
       if (masterHlsUrl) {
         streams.push({
           server: "Auto Adaptive (Master HLS - High Speed)",
@@ -229,7 +298,6 @@ export const getStream = async function ({
           headers: streamHeaders,
         });
       }
-      // 2. Direct MP4 High Speed (60 Mbps CDN)
       if (highMatch && highMatch[1]) {
         streams.push({
           server: "Direct MP4 (High Speed 60Mbps)",
@@ -239,9 +307,7 @@ export const getStream = async function ({
           headers: streamHeaders,
         });
       }
-      // 3. Variant HLS streams
       streams.push(...hlsVariants);
-      // 4. Low MP4 fallback
       if (lowMatch && lowMatch[1]) {
         streams.push({
           server: "Direct MP4 (Low)",

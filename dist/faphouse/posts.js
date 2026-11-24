@@ -1,5 +1,5 @@
 // @vega-provider faphouse
-// @vega-version 1.0.0
+// @vega-version 1.0.1
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -177,18 +177,14 @@ function upgradeFaphouseImageUrl(src, srcset, posterSrc) {
   if (!src || typeof src !== "string") return "";
   let clean = src.trim();
   if (clean.startsWith("//")) clean = "https:" + clean;
-  if (clean.includes("w:352") || clean.includes("w%3A352")) {
-    clean = clean.replace(/w[:%]3A352/g, "w:704").replace(/h[:%]3A220/g, "h:440").replace(/w:352/g, "w:704").replace(/h:220/g, "h:440");
-  }
   return clean;
 }
 function parseCards($, baseUrl) {
   const posts = [];
   const seen = /* @__PURE__ */ new Set();
-  $("a.t-vl, .t-m, .thumb.tv").each((_, el) => {
+  $("a.t-vl").each((_, el) => {
     const $el = $(el);
-    const linkEl = $el.is("a.t-vl") ? $el : $el.find("a.t-vl, a[href*='/videos/']").first();
-    let rawHref = linkEl.attr("href") || "";
+    let rawHref = $el.attr("href") || "";
     if (!rawHref) return;
     let cleanHref = rawHref.split("#")[0].trim();
     if (!cleanHref.includes("/videos/")) return;
@@ -201,35 +197,48 @@ function parseCards($, baseUrl) {
     const srcset = img.attr("srcset") || "";
     const src = img.attr("src") || "";
     const finalImage = upgradeFaphouseImageUrl(src, srcset, poster);
-    const parentContainer = $el.closest(".thumb, .t-m").parent();
-    let title = parentContainer.find("a.t-tv").first().text().trim() || parentContainer.find(".t-tc").first().attr("title") || img.attr("alt") || linkEl.attr("title") || "";
+    const cardRoot = $el.closest(".thumb, .t-m").parent();
+    let title = cardRoot.find("a.t-tv").first().text().trim() || cardRoot.find(".t-tc").first().attr("title") || img.attr("alt") || $el.attr("title") || "";
     title = title.replace(/\s+/g, " ").trim();
     const viEl = $el.find(".t-vi, .t-vb").first();
     const durationSpan = viEl.find("span").first().text().trim();
     const viText = viEl.text().trim();
-    let cornerTag = "";
+    let badge = "";
     if (/\b(?:4K|UHD)\b/i.test(viText) || /\b(?:4K|UHD)\b/i.test(title)) {
-      cornerTag = "4K";
+      badge = "4K";
     } else if (/\bVR\b/i.test(viText) || /\bVR\b/i.test(title)) {
-      cornerTag = "VR";
+      badge = "VR";
     } else if (/\bHD\b/i.test(viText)) {
-      cornerTag = "HD";
+      badge = "HD";
     }
+    const durationText = durationSpan || (/\d+:\d+/.test(viText) ? viText.match(/\d+:\d+/)?.[0] || "" : "");
+    const cornerTag = durationText ? badge ? `${durationText} \u2022 ${badge}` : durationText : badge || void 0;
     if (title && fullLink && finalImage) {
       posts.push({
         title,
         link: fullLink,
         image: finalImage,
-        tag: durationSpan || viText,
+        tag: durationText || badge || void 0,
         cornerTag
       });
     }
   });
   return posts;
 }
+async function getCookieHeader(kvStore) {
+  let sessionCookie = "";
+  if (kvStore && typeof kvStore.get === "function") {
+    try {
+      sessionCookie = await kvStore.get("sessionCookie") || "";
+    } catch (e) {
+    }
+  }
+  return sessionCookie ? `siteMode=desktop; locale=en; ${String(sessionCookie).trim()}` : "siteMode=desktop; locale=en;";
+}
 var getPosts = async function({
   filter,
   page,
+  signal,
   providerContext
 }) {
   const { axios, cheerio, kvStore } = providerContext;
@@ -244,7 +253,12 @@ var getPosts = async function({
   }
   let path = "/videos";
   if (only3D) {
-    path = "/c/3d/videos";
+    if (!filter || filter === "trending" || filter === "homepage" || filter === "/c/3d/videos") {
+      path = "/c/3d/videos";
+    } else {
+      const catSlug = filter.replace(/^\/c\//, "").replace(/\/videos.*$/, "").replace(/^(?:genre|tag):/, "").replace(/^\//, "").replace(/[-_]+/g, " ").trim();
+      path = `/search/videos?q=${encodeURIComponent(catSlug ? `${catSlug} 3d` : "3d")}`;
+    }
   } else if (!filter || filter === "trending" || filter === "homepage") {
     path = p === 1 ? "/" : "/videos";
   } else if (filter.startsWith("/")) {
@@ -259,13 +273,15 @@ var getPosts = async function({
   const finalPath = p > 1 ? `${path}${sep}page=${p}` : path;
   const requestUrl = `${baseUrl}${finalPath.startsWith("/") ? "" : "/"}${finalPath}`;
   try {
+    const cookieHeader = await getCookieHeader(kvStore);
     const res = await axios.get(requestUrl, {
       headers: {
         "User-Agent": DEFAULT_USER_AGENT,
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         Referer: `${baseUrl}/`,
-        Cookie: "siteMode=desktop; locale=en;"
+        Cookie: cookieHeader
       },
+      signal,
       timeout: 1e4,
       maxRedirects: 3
     });
@@ -282,6 +298,7 @@ var getPosts = async function({
 var getSearchPosts = async function({
   searchQuery,
   page,
+  signal,
   providerContext
 }) {
   const { axios, cheerio, kvStore } = providerContext;
@@ -305,13 +322,15 @@ var getSearchPosts = async function({
   }
   const requestUrl = `${baseUrl}${finalPath}`;
   try {
+    const cookieHeader = await getCookieHeader(kvStore);
     const res = await axios.get(requestUrl, {
       headers: {
         "User-Agent": DEFAULT_USER_AGENT,
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         Referer: `${baseUrl}/`,
-        Cookie: "siteMode=desktop; locale=en;"
+        Cookie: cookieHeader
       },
+      signal,
       timeout: 1e4,
       maxRedirects: 3
     });

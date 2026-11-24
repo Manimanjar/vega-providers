@@ -71,17 +71,17 @@ export function upgradePornhubImageUrl(url: string): string {
     return "https://ei.phncdn.com" + origMatch[1];
   }
 
-  // 2. If it's already on unblocked Fastly (pix-fl) or Edgecast (pix-egi, ei), preserve the valid signed URL as-is!
+  // 2. If it's already on unblocked Fastly (pix-fl) with token or Edgecast (pix-egi, ei), preserve it!
   if (
-    cleanUrl.includes("pix-fl.phncdn.com") ||
     cleanUrl.includes("pix-egi.phncdn.com") ||
-    cleanUrl.includes("ei.phncdn.com")
+    cleanUrl.includes("ei.phncdn.com") ||
+    (cleanUrl.includes("pix-fl.phncdn.com") && cleanUrl.includes("hdnea="))
   ) {
     return cleanUrl;
   }
 
-  // 3. If it's on blocked pix-cdn77, replace with pix-fl so it routes through Fastly
-  if (cleanUrl.includes("pix-cdn77.phncdn.com")) {
+  // 3. Only rewrite pix-cdn77 -> pix-fl if it carries an hdnea token
+  if (cleanUrl.includes("pix-cdn77.phncdn.com") && cleanUrl.includes("hdnea=")) {
     return cleanUrl.replace("pix-cdn77.phncdn.com", "pix-fl.phncdn.com");
   }
 

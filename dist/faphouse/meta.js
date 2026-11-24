@@ -1,5 +1,5 @@
 // @vega-provider faphouse
-// @vega-version 1.0.0
+// @vega-version 1.0.1
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -174,9 +174,6 @@ function upgradeFaphouseImageUrl(src, srcset, posterSrc) {
   if (!src || typeof src !== "string") return "";
   let clean = src.trim();
   if (clean.startsWith("//")) clean = "https:" + clean;
-  if (clean.includes("w:352") || clean.includes("w%3A352")) {
-    clean = clean.replace(/w[:%]3A352/g, "w:704").replace(/h[:%]3A220/g, "h:440").replace(/w:352/g, "w:704").replace(/h:220/g, "h:440");
-  }
   return clean;
 }
 
@@ -227,15 +224,17 @@ var getMeta = async function({
       synopsis = `Watch ${title} in HD on FapHouse.`;
     }
     const tags = [];
-    $("a[href*='/c/']").each((_, a) => {
-      let t = $(a).text().trim();
+    $(".video-info-details__categories a.vid-c[href*='/c/']").each((_, a) => {
+      const t = $(a).text().trim();
       if (t && !tags.includes(t) && !t.includes("All") && t.length < 30) {
         tags.push(t);
       }
     });
     const cast = [];
-    $("a[href*='/models/'], a[href*='/pornstars/']").each((_, a) => {
-      let name = $(a).text().trim();
+    $(
+      ".video-info-details__studio-link, .video-info-details__categories a.vid-c[href*='/models/'], .video-info-details__categories a.vid-c[href*='/pornstars/']"
+    ).each((_, a) => {
+      const name = $(a).text().trim();
       if (name && !cast.includes(name) && !name.includes("Join") && !name.includes("See more")) {
         cast.push(name);
       }
