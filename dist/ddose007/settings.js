@@ -1,5 +1,5 @@
 // @vega-provider ddose007
-// @vega-version 1.0.4
+// @vega-version 1.1.0
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -30,8 +30,8 @@ var settings = [
     key: "baseUrlOverride",
     type: "text",
     label: "Domain Override",
-    description: "Override base website domain if blocked by your ISP (e.g. https://ddose007.cc)",
-    placeholder: "https://ddose007.cc",
-    defaultValue: "https://ddose007.cc"
+    description: "Override base website domain if blocked by your ISP (e.g. https://ddose007.rest)",
+    placeholder: "https://ddose007.tv",
+    defaultValue: "https://ddose007.tv"
   }
 ];

@@ -1,5 +1,5 @@
 // @vega-provider ddose007
-// @vega-version 1.0.4
+// @vega-version 1.1.0
 "use strict";
 "use strict";
 var __defProp = Object.defineProperty;
@@ -28,12 +28,13 @@ __export(domain_exports, {
 });
 module.exports = __toCommonJS(domain_exports);
 var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
-var DEFAULT_BASE_URL = "https://ddose007.co";
+var DEFAULT_BASE_URL = "https://ddose007.tv";
 var BASE_CACHE_KEY = "ddose007_baseUrlCacheV4";
 var LEARNED_KEY = "ddose007_learnedDomainV2";
 var CANDIDATE_MIRRORS = [
-  "https://ddose007.co",
-  "https://ddose007.cc"
+  "https://ddose007.tv",
+  "https://ddose007.rest",
+  "https://ddose007.homes"
 ];
 var memoryCache = { url: "", expiresAt: 0 };
 async function isHealthyMirror(axios, mirror) {

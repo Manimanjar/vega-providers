@@ -55,9 +55,39 @@ export async function getMeta(
 
     recordRedirect(res, baseUrl, kvStore);
 
-    const $ = cheerio.load(res.data);
+    const pageHtml = String(res.data || "");
+    const $ = cheerio.load(pageHtml);
+
+    // The post page carries a JSON-LD VideoObject with the reliable
+    // title, description and thumbnail (verified 2026-11-25). Prefer it;
+    // the meta/h1 fallbacks below cover pages without it.
+    let ldTitle = "";
+    let ldDesc = "";
+    let ldImage = "";
+    const ldMatches = pageHtml.match(
+      /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
+    );
+    if (ldMatches) {
+      for (const block of ldMatches) {
+        const inner = block.replace(/<script[^>]*>/i, "").replace(/<\/script>/i, "");
+        try {
+          const data = JSON.parse(inner);
+          const objects = Array.isArray(data) ? data : [data];
+          for (const obj of objects) {
+            if (obj && obj["@type"] === "VideoObject") {
+              ldTitle = String(obj.name || "");
+              ldDesc = String(obj.description || "");
+              ldImage = String(obj.thumbnailUrl || "");
+              break;
+            }
+          }
+        } catch (e) {}
+        if (ldTitle) break;
+      }
+    }
 
     let title =
+      ldTitle ||
       $('meta[itemprop="name"]').attr("content") ||
       $('meta[property="og:title"]').attr("content") ||
       $(".video-title h1").first().text().trim() ||
@@ -67,12 +97,14 @@ export async function getMeta(
     title = title.replace(/\s+/g, " ").trim();
 
     const synopsis =
+      ldDesc ||
       $('meta[itemprop="description"]').attr("content") ||
       $('meta[property="og:description"]').attr("content") ||
       $(".video-details, .entry-content").first().text().trim() ||
       "";
 
     let image =
+      ldImage ||
       $('meta[itemprop="thumbnailUrl"]').attr("content") ||
       $('meta[property="og:image"]').attr("content") ||
       $(".video-player img").first().attr("src") ||
