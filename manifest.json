@@ -2,7 +2,7 @@
     {
         "display_name": "XVideos",
         "value": "xvideos",
-        "version": "2.4.1",
+        "version": "2.4.2",
         "icon": "https://cdn-icons-png.flaticon.com/512/831/831331.png",
         "type": "global",
         "disabled": false,
@@ -20,7 +20,7 @@
     {
         "display_name": "PornHub",
         "value": "pornhub",
-        "version": "2.4.2",
+        "version": "2.4.3",
         "icon": "https://www.pornhub.com/favicon.ico",
         "type": "global",
         "disabled": false,

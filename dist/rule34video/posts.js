@@ -577,7 +577,7 @@ async function getPooledSearchPage(opts) {
         }
         if (pagePosts.length === 0) {
           emptyStreak++;
-          if (emptyStreak >= 1) {
+          if (emptyStreak >= 2) {
             emptyStreak = 0;
             curTermIdx++;
             curTermPage = 1;
@@ -594,7 +594,7 @@ async function getPooledSearchPage(opts) {
         curTermPage++;
         if (pool.length === before) {
           dupStreak++;
-          if (dupStreak >= 5) {
+          if (dupStreak >= 8) {
             dupStreak = 0;
             curTermIdx++;
             curTermPage = 1;
@@ -627,7 +627,7 @@ async function getPooledSearchPage(opts) {
         fetchedPages = sp;
         if (pagePosts.length === 0) {
           emptyStreak++;
-          if (emptyStreak >= 2) break;
+          if (emptyStreak >= 3) break;
           continue;
         }
         emptyStreak = 0;
@@ -635,7 +635,7 @@ async function getPooledSearchPage(opts) {
         pool = dedupePosts(pool.concat(pagePosts));
         if (pool.length === before) {
           dupStreak++;
-          if (dupStreak >= 5) break;
+          if (dupStreak >= 8) break;
         } else {
           dupStreak = 0;
         }

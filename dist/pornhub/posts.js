@@ -1,5 +1,5 @@
 // @vega-provider pornhub
-// @vega-version 2.4.2
+// @vega-version 2.4.3
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -577,7 +577,7 @@ async function getPooledSearchPage(opts) {
         }
         if (pagePosts.length === 0) {
           emptyStreak++;
-          if (emptyStreak >= 1) {
+          if (emptyStreak >= 2) {
             emptyStreak = 0;
             curTermIdx++;
             curTermPage = 1;
@@ -594,7 +594,7 @@ async function getPooledSearchPage(opts) {
         curTermPage++;
         if (pool.length === before) {
           dupStreak++;
-          if (dupStreak >= 5) {
+          if (dupStreak >= 8) {
             dupStreak = 0;
             curTermIdx++;
             curTermPage = 1;
@@ -627,7 +627,7 @@ async function getPooledSearchPage(opts) {
         fetchedPages = sp;
         if (pagePosts.length === 0) {
           emptyStreak++;
-          if (emptyStreak >= 2) break;
+          if (emptyStreak >= 3) break;
           continue;
         }
         emptyStreak = 0;
@@ -635,7 +635,7 @@ async function getPooledSearchPage(opts) {
         pool = dedupePosts(pool.concat(pagePosts));
         if (pool.length === before) {
           dupStreak++;
-          if (dupStreak >= 5) break;
+          if (dupStreak >= 8) break;
         } else {
           dupStreak = 0;
         }
@@ -1310,35 +1310,45 @@ async function searchApi(query, page, opts) {
   var signal = opts.signal;
   var baseUrl = opts && opts.baseUrl || DEFAULT_BASE_URL;
   var candidateBases = [
-    "https://de.pornhub.com",
-    "https://www.pornhub.org",
     baseUrl,
+    "https://www.pornhub.org",
+    "https://de.pornhub.com",
     "https://www.pornhub.com",
-    "https://rt.pornhub.com",
-    "https://www.pornhub.net"
+    "https://rt.pornhub.com"
   ].filter(function(b, idx, arr) {
     return b && arr.indexOf(b) === idx;
-  });
-  for (var bi = 0; bi < candidateBases.length; bi++) {
-    var curBase = candidateBases[bi];
-    var apiUrl = curBase + "/webmasters/search?search=" + encodeURIComponent(query) + "&page=" + Math.max(1, page || 1) + "&thumbsize=large_hd";
-    for (var retry = 0; retry < 2; retry++) {
-      try {
-        var res = await axios.get(apiUrl, {
-          timeout: 9e3,
-          headers: Object.assign({}, commonHeaders, {
-            Accept: "application/json, text/plain, */*",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Sec-CH-UA": '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
-            "Sec-CH-UA-Mobile": "?0",
-            "Sec-CH-UA-Platform": '"Windows"',
-            Referer: curBase + "/",
-            Cookie: "platform=pc; bs=0"
-          }),
-          signal,
-          maxRedirects: 5
-        });
+  }).slice(0, 4);
+  var queryPart = query ? "search=" + encodeURIComponent(query) + "&page=" + Math.max(1, page || 1) + "&thumbsize=large_hd" : "ordering=mostviewed&period=weekly&page=" + Math.max(1, page || 1) + "&thumbsize=large_hd";
+  var winner = await new Promise(function(resolve) {
+    var resolved = false;
+    var pending = candidateBases.length;
+    if (pending === 0) {
+      resolve(null);
+      return;
+    }
+    var attemptMirror = function(curBase, attempt) {
+      if (resolved || signal && signal.aborted) {
+        pending--;
+        if (pending === 0 && !resolved) resolve(null);
+        return;
+      }
+      var apiUrl = curBase + "/webmasters/search?" + queryPart;
+      axios.get(apiUrl, {
+        timeout: 4500,
+        headers: Object.assign({}, commonHeaders, {
+          Accept: "application/json, text/plain, */*",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Sec-CH-UA": '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
+          "Sec-CH-UA-Mobile": "?0",
+          "Sec-CH-UA-Platform": '"Windows"',
+          Referer: curBase + "/",
+          Cookie: "platform=pc; bs=0"
+        }),
+        signal,
+        maxRedirects: 5
+      }).then(function(res) {
+        if (resolved) return;
         if (res.request && res.request.responseURL && opts.kvStore) {
           try {
             var u = new URL(res.request.responseURL);
@@ -1354,11 +1364,41 @@ async function searchApi(query, page, opts) {
           try {
             data = JSON.parse(data);
           } catch (e) {
-            continue;
+            pending--;
+            if (pending === 0 && !resolved) resolve(null);
+            return;
           }
         }
-        var videos = data && data.videos || [];
-        if (!Array.isArray(videos)) continue;
+        var vids = data && data.videos || [];
+        if (!Array.isArray(vids) || vids.length === 0 && !query) {
+          pending--;
+          if (pending === 0 && !resolved) resolve(null);
+          return;
+        }
+        resolved = true;
+        resolve(vids);
+      }).catch(function(err) {
+        if (resolved) return;
+        var status = err && err.response && err.response.status;
+        if (!(signal && signal.aborted) && !status && attempt < 5) {
+          setTimeout(function() {
+            attemptMirror(curBase, attempt + 1);
+          }, 80);
+          return;
+        }
+        pending--;
+        if (pending === 0 && !resolved) resolve(null);
+      });
+    };
+    for (var bi = 0; bi < candidateBases.length; bi++) {
+      attemptMirror(candidateBases[bi], 1);
+    }
+  });
+  if (!winner) return [];
+  var videos = winner;
+  {
+    {
+      {
         var posts = [];
         var seen = {};
         for (var i = 0; i < videos.length; i++) {
@@ -1463,16 +1503,9 @@ async function searchApi(query, page, opts) {
           );
         }
         return posts;
-      } catch (err) {
-        if (retry === 0) {
-          await new Promise(function(r) {
-            setTimeout(r, 250);
-          });
-        }
       }
     }
   }
-  return [];
 }
 function getCategory(filter) {
   return categories_config_default.categories.find(function(category) {

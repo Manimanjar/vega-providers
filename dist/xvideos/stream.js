@@ -1,5 +1,5 @@
 // @vega-provider xvideos
-// @vega-version 2.4.1
+// @vega-version 2.4.2
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -25,7 +25,6 @@ __export(stream_exports, {
   getStream: () => getStream
 });
 module.exports = __toCommonJS(stream_exports);
-var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
 var DEFAULT_BASE_URL = "https://www.xvideos.com";
 var BASE_CACHE_KEY = "xvideos_baseUrlCacheV1";
 var memoryCache = { data: null, expiresAt: 0 };
@@ -51,6 +50,13 @@ async function getBase(kvStore, axios) {
   }
   if (kvStore && typeof kvStore.get === "function") {
     try {
+      const learned = await kvStore.get("xvideos_learnedDomain");
+      if (learned && typeof learned === "string" && learned.startsWith("http")) {
+        return learned.replace(/\/+$/, "");
+      }
+    } catch (e) {
+    }
+    try {
       const cachedRaw = await kvStore.get(BASE_CACHE_KEY);
       if (cachedRaw) {
         const cached = typeof cachedRaw === "string" ? JSON.parse(cachedRaw) : cachedRaw;
@@ -61,40 +67,56 @@ async function getBase(kvStore, axios) {
     } catch (e) {
     }
   }
-  if (axios) {
-    try {
-      const res = await axios.get(URLS_ENDPOINT, { timeout: 3e3 });
-      if (res.data && typeof res.data === "object") {
-        memoryCache.data = res.data;
-        memoryCache.expiresAt = now + 36e5;
-        const entry = res.data["xvideos"];
-        if (entry && entry.url) {
-          const cleanEntry = entry.url.replace(/\/+$/, "");
-          if (kvStore && typeof kvStore.set === "function") {
-            try {
-              await kvStore.set(
-                BASE_CACHE_KEY,
-                JSON.stringify({ url: cleanEntry, expiresAt: now + 36e5 })
-              );
-            } catch (e) {
-            }
-          }
-          return cleanEntry;
-        }
-      }
-    } catch (e) {
-    }
-  }
-  if (kvStore && typeof kvStore.get === "function") {
-    try {
-      const learned = await kvStore.get("xvideos_learnedDomain");
-      if (learned && typeof learned === "string" && learned.startsWith("http")) {
-        return learned.replace(/\/+$/, "");
-      }
-    } catch (e) {
-    }
-  }
   return DEFAULT_BASE_URL;
+}
+function raceStreamMirrors(candidateBases, pathPart, axios, commonHeaders, ua, signal, maxAttemptsPerMirror = 3) {
+  return new Promise((resolve) => {
+    let resolved = false;
+    let pending = candidateBases.length;
+    if (pending === 0) {
+      resolve(null);
+      return;
+    }
+    const attemptMirror = (curBase, attempt) => {
+      if (resolved || signal?.aborted) {
+        pending--;
+        if (pending === 0 && !resolved) resolve(null);
+        return;
+      }
+      const targetUrl = `${curBase}${pathPart}`;
+      axios.get(targetUrl, {
+        headers: {
+          ...commonHeaders,
+          Referer: `${curBase}/`,
+          "User-Agent": ua
+        },
+        signal,
+        timeout: 4500,
+        maxRedirects: 5
+      }).then((res) => {
+        if (resolved) return;
+        if (typeof res.data === "string" && res.data.includes("html5player")) {
+          resolved = true;
+          resolve({ html: res.data, workingBase: curBase });
+          return;
+        }
+        pending--;
+        if (pending === 0 && !resolved) resolve(null);
+      }).catch((err) => {
+        if (resolved) return;
+        const status = err?.response?.status;
+        if (!signal?.aborted && !status && attempt < maxAttemptsPerMirror) {
+          setTimeout(() => attemptMirror(curBase, attempt + 1), 100);
+          return;
+        }
+        pending--;
+        if (pending === 0 && !resolved) resolve(null);
+      });
+    };
+    for (const curBase of candidateBases) {
+      attemptMirror(curBase, 1);
+    }
+  });
 }
 var getStream = async function({
   link,
@@ -116,6 +138,7 @@ var getStream = async function({
   if (!pathPart.startsWith("/")) {
     pathPart = "/" + pathPart;
   }
+  pathPart = pathPart.replace(/\/THUMBNUM\//gi, "/0/");
   const candidateBases = [
     baseUrl,
     "https://www.xvideos.com",
@@ -127,36 +150,18 @@ var getStream = async function({
     "User-Agent": ua
   };
   try {
-    let html = "";
-    let workingBase = baseUrl;
-    for (const curBase of candidateBases) {
-      const targetUrl = `${curBase}${pathPart}`;
-      for (let retry = 0; retry < 2; retry++) {
-        try {
-          const res = await axios.get(targetUrl, {
-            headers: {
-              ...commonHeaders,
-              Referer: `${curBase}/`,
-              "User-Agent": ua
-            },
-            signal,
-            timeout: 8e3,
-            maxRedirects: 5
-          });
-          if (typeof res.data === "string" && res.data.includes("html5player")) {
-            html = res.data;
-            workingBase = curBase;
-            break;
-          }
-        } catch (e) {
-          if (retry === 0) {
-            await new Promise((r) => setTimeout(r, 250));
-          }
-        }
-      }
-      if (html) break;
+    let winner = await raceStreamMirrors(candidateBases, pathPart, axios, commonHeaders, ua, signal);
+    if (!winner) {
+      winner = await raceStreamMirrors(candidateBases, pathPart, axios, commonHeaders, ua, signal);
     }
-    if (!html) return [];
+    if (!winner) return [];
+    const { html, workingBase } = winner;
+    if (kvStore && typeof kvStore.set === "function" && workingBase) {
+      try {
+        kvStore.set("xvideos_learnedDomain", workingBase);
+      } catch (e) {
+      }
+    }
     const pageHeaders = {
       ...commonHeaders,
       Referer: `${workingBase}/`,

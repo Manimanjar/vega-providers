@@ -364,7 +364,7 @@ export async function getPooledSearchPage(opts) {
         }
         if (pagePosts.length === 0) {
           emptyStreak++;
-          if (emptyStreak >= 1) {
+          if (emptyStreak >= 2) {
             // Reached last page of this keyword; move to next keyword
             emptyStreak = 0;
             curTermIdx++;
@@ -382,7 +382,7 @@ export async function getPooledSearchPage(opts) {
         curTermPage++;
         if (pool.length === before) {
           dupStreak++;
-          if (dupStreak >= 5) {
+          if (dupStreak >= 8) {
             // Loop guard for repeating identical pages: advance to next keyword
             dupStreak = 0;
             curTermIdx++;
@@ -416,7 +416,7 @@ export async function getPooledSearchPage(opts) {
         fetchedPages = sp;
         if (pagePosts.length === 0) {
           emptyStreak++;
-          if (emptyStreak >= 2) break; // Genuine end of results after 2 consecutive empty pages
+          if (emptyStreak >= 3) break; // Genuine end of results after 3 consecutive empty pages
           continue;
         }
         emptyStreak = 0;
@@ -424,7 +424,7 @@ export async function getPooledSearchPage(opts) {
         pool = dedupePosts(pool.concat(pagePosts));
         if (pool.length === before) {
           dupStreak++;
-          if (dupStreak >= 5) break;
+          if (dupStreak >= 8) break;
         } else {
           dupStreak = 0;
         }

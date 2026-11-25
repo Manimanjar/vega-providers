@@ -184,30 +184,39 @@ async function searchApi(query, page, opts) {
   var baseUrl = (opts && opts.baseUrl) || DEFAULT_BASE_URL;
 
   var candidateBases = [
-    "https://de.pornhub.com",
-    "https://www.pornhub.org",
     baseUrl,
+    "https://www.pornhub.org",
+    "https://de.pornhub.com",
     "https://www.pornhub.com",
     "https://rt.pornhub.com",
-    "https://www.pornhub.net",
-  ].filter(function (b, idx, arr) {
-    return b && arr.indexOf(b) === idx;
-  });
+  ]
+    .filter(function (b, idx, arr) {
+      return b && arr.indexOf(b) === idx;
+    })
+    .slice(0, 4);
 
-  for (var bi = 0; bi < candidateBases.length; bi++) {
-    var curBase = candidateBases[bi];
-    var apiUrl =
-      curBase +
-      "/webmasters/search?search=" +
-      encodeURIComponent(query) +
-      "&page=" +
-      Math.max(1, page || 1) +
-      "&thumbsize=large_hd";
+  var queryPart = query
+    ? "search=" + encodeURIComponent(query) + "&page=" + Math.max(1, page || 1) + "&thumbsize=large_hd"
+    : "ordering=mostviewed&period=weekly&page=" + Math.max(1, page || 1) + "&thumbsize=large_hd";
 
-    for (var retry = 0; retry < 2; retry++) {
-      try {
-        var res = await axios.get(apiUrl, {
-          timeout: 9000,
+  var winner = await new Promise(function (resolve) {
+    var resolved = false;
+    var pending = candidateBases.length;
+    if (pending === 0) {
+      resolve(null);
+      return;
+    }
+
+    var attemptMirror = function (curBase, attempt) {
+      if (resolved || (signal && signal.aborted)) {
+        pending--;
+        if (pending === 0 && !resolved) resolve(null);
+        return;
+      }
+      var apiUrl = curBase + "/webmasters/search?" + queryPart;
+      axios
+        .get(apiUrl, {
+          timeout: 4500,
           headers: Object.assign({}, commonHeaders, {
             Accept: "application/json, text/plain, */*",
             "User-Agent":
@@ -221,29 +230,62 @@ async function searchApi(query, page, opts) {
           }),
           signal: signal,
           maxRedirects: 5,
-        });
-
-        if (res.request && res.request.responseURL && opts.kvStore) {
-          try {
-            var u = new URL(res.request.responseURL);
-            var origin = u.origin.replace(/\/+$/, "");
-            if (origin && origin.startsWith("http") && origin !== baseUrl && !origin.includes("pornhub.org")) {
-              opts.kvStore.set("pornhub_learnedDomain", origin);
-            }
-          } catch (e) {}
-        }
-
-        var data = res.data;
-        if (typeof data === "string") {
-          try {
-            data = JSON.parse(data);
-          } catch (e) {
-            continue;
+        })
+        .then(function (res) {
+          if (resolved) return;
+          if (res.request && res.request.responseURL && opts.kvStore) {
+            try {
+              var u = new URL(res.request.responseURL);
+              var origin = u.origin.replace(/\/+$/, "");
+              if (origin && origin.startsWith("http") && origin !== baseUrl && !origin.includes("pornhub.org")) {
+                opts.kvStore.set("pornhub_learnedDomain", origin);
+              }
+            } catch (e) {}
           }
-        }
-        var videos = (data && data.videos) || [];
-        if (!Array.isArray(videos)) continue;
+          var data = res.data;
+          if (typeof data === "string") {
+            try {
+              data = JSON.parse(data);
+            } catch (e) {
+              pending--;
+              if (pending === 0 && !resolved) resolve(null);
+              return;
+            }
+          }
+          var vids = (data && data.videos) || [];
+          if (!Array.isArray(vids) || (vids.length === 0 && !query)) {
+            pending--;
+            if (pending === 0 && !resolved) resolve(null);
+            return;
+          }
+          resolved = true;
+          resolve(vids);
+        })
+        .catch(function (err) {
+          if (resolved) return;
+          var status = err && err.response && err.response.status;
+          if (!(signal && signal.aborted) && !status && attempt < 5) {
+            setTimeout(function () {
+              attemptMirror(curBase, attempt + 1);
+            }, 80);
+            return;
+          }
+          pending--;
+          if (pending === 0 && !resolved) resolve(null);
+        });
+    };
 
+    for (var bi = 0; bi < candidateBases.length; bi++) {
+      attemptMirror(candidateBases[bi], 1);
+    }
+  });
+
+  if (!winner) return [];
+
+  var videos = winner;
+  {
+    {
+      {
         var posts = [];
         var seen = {};
         for (var i = 0; i < videos.length; i++) {
@@ -374,16 +416,9 @@ async function searchApi(query, page, opts) {
         }
 
         return posts;
-      } catch (err) {
-        if (retry === 0) {
-          await new Promise(function (r) {
-            setTimeout(r, 250);
-          });
-        }
       }
     }
   }
-  return [];
 }
 
 function getCategory(filter) {

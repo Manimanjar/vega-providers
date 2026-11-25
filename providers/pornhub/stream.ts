@@ -2,7 +2,8 @@ import { Stream, ProviderContext } from "../types";
 
 const URLS_ENDPOINT =
   "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
-const DEFAULT_BASE_URL = "https://www.pornhub.com";
+const DEFAULT_BASE_URL = "https://de.pornhub.com";
+const BASE_CACHE_KEY = "pornhub_baseUrlCacheV1";
 let memoryCache = { data: null as any, expiresAt: 0 };
 
 async function getBase(kvStore: any, axios: any): Promise<string> {
@@ -16,6 +17,21 @@ async function getBase(kvStore: any, axios: any): Promise<string> {
         }
       }
     } catch (e) {}
+    try {
+      const learned = await kvStore.get("pornhub_learnedDomain");
+      if (learned && typeof learned === "string" && learned.startsWith("http")) {
+        return learned.replace(/\/+$/, "");
+      }
+    } catch (e) {}
+    try {
+      const cachedRaw = await kvStore.get(BASE_CACHE_KEY);
+      if (cachedRaw) {
+        const cached = typeof cachedRaw === "string" ? JSON.parse(cachedRaw) : cachedRaw;
+        if (cached && cached.url && cached.expiresAt > Date.now()) {
+          return String(cached.url).replace(/\/+$/, "");
+        }
+      }
+    } catch (e) {}
   }
 
   const now = Date.now();
@@ -24,29 +40,6 @@ async function getBase(kvStore: any, axios: any): Promise<string> {
     if (cachedEntry && cachedEntry.url) {
       return cachedEntry.url.replace(/\/+$/, "");
     }
-  }
-
-  if (axios) {
-    try {
-      const res = await axios.get(URLS_ENDPOINT, { timeout: 4000 });
-      if (res.data && typeof res.data === "object") {
-        memoryCache.data = res.data;
-        memoryCache.expiresAt = now + 3600000;
-        const entry = res.data["pornhub"];
-        if (entry && entry.url) {
-          return entry.url.replace(/\/+$/, "");
-        }
-      }
-    } catch (e) {}
-  }
-
-  if (kvStore && typeof kvStore.get === "function") {
-    try {
-      const learned = await kvStore.get("pornhub_learnedDomain");
-      if (learned && typeof learned === "string" && learned.startsWith("http")) {
-        return learned.replace(/\/+$/, "");
-      }
-    } catch (e) {}
   }
 
   return DEFAULT_BASE_URL;
@@ -132,19 +125,35 @@ export const getStream = async function ({
   }
 
   const candidateBases = [
-    "https://de.pornhub.com",
-    "https://www.pornhub.org",
     baseUrl,
+    "https://www.pornhub.org",
+    "https://de.pornhub.com",
     "https://www.pornhub.com",
     "https://rt.pornhub.com",
-    "https://www.pornhub.net",
-  ].filter((b, idx, arr) => b && arr.indexOf(b) === idx);
+  ]
+    .filter((b, idx, arr) => b && arr.indexOf(b) === idx)
+    .slice(0, 4);
 
-  for (const curBase of candidateBases) {
-    const targetUrl = `${curBase}${pathPart}`;
-    for (let retry = 0; retry < 2; retry++) {
-      try {
-        const res = await axios.get(targetUrl, {
+  const raceResult = await new Promise<{
+    defs: any[];
+    effectiveOrigin: string;
+  } | null>((resolve) => {
+    let resolved = false;
+    let pending = candidateBases.length;
+    if (pending === 0) {
+      resolve(null);
+      return;
+    }
+
+    const attemptMirror = (curBase: string, attempt: number) => {
+      if (resolved || signal?.aborted) {
+        pending--;
+        if (pending === 0 && !resolved) resolve(null);
+        return;
+      }
+      const targetUrl = `${curBase}${pathPart}`;
+      axios
+        .get(targetUrl, {
           headers: {
             "User-Agent":
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
@@ -158,92 +167,107 @@ export const getStream = async function ({
             Cookie: "platform=pc; bs=0",
           },
           signal,
-          timeout: 9000,
+          timeout: 5000,
           maxRedirects: 5,
+        })
+        .then((res: any) => {
+          if (resolved) return;
+          let effectiveOrigin = curBase;
+          if (res.request && res.request.responseURL) {
+            try {
+              effectiveOrigin = new URL(res.request.responseURL).origin.replace(/\/+$/, "");
+              if (effectiveOrigin && effectiveOrigin.startsWith("http") && kvStore) {
+                kvStore.set("pornhub_learnedDomain", effectiveOrigin);
+              }
+            } catch (e) {}
+          }
+          const html = res.data || "";
+          const defs = extractMediaDefinitions(html);
+          if (defs.length > 0) {
+            resolved = true;
+            resolve({ defs, effectiveOrigin });
+            return;
+          }
+          pending--;
+          if (pending === 0 && !resolved) resolve(null);
+        })
+        .catch((err: any) => {
+          if (resolved) return;
+          const status = err?.response?.status;
+          if (!signal?.aborted && !status && attempt < 4) {
+            setTimeout(() => attemptMirror(curBase, attempt + 1), 80);
+            return;
+          }
+          pending--;
+          if (pending === 0 && !resolved) resolve(null);
         });
+    };
 
-        let effectiveOrigin = curBase;
-        if (res.request && res.request.responseURL) {
-          try {
-            effectiveOrigin = new URL(res.request.responseURL).origin.replace(/\/+$/, "");
-            if (effectiveOrigin && effectiveOrigin.startsWith("http") && kvStore) {
-              kvStore.set("pornhub_learnedDomain", effectiveOrigin);
-            }
-          } catch (e) {}
-        }
-
-        const html = res.data || "";
-        const defs = extractMediaDefinitions(html);
-        if (defs.length === 0) continue;
-
-      const streamHeaders = {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Referer: `${effectiveOrigin}/`,
-        Origin: effectiveOrigin,
-      };
-
-      const streams: Stream[] = [];
-      const seen = new Set<string>();
-
-      const hlsDefs = defs
-        .filter((d: any) => d && d.format === "hls" && d.videoUrl && !String(d.videoUrl).includes("hv-h.phncdn.com"))
-        .map((d: any) => ({
-          quality: String(d.quality || d.height || "1080"),
-          height: parseInt(d.height, 10) || parseInt(d.quality, 10) || 0,
-          url: String(d.videoUrl).replace(/\\\//g, "/").replace(/&amp;/g, "&"),
-        }))
-        .sort((a, b) => b.height - a.height);
-
-      const mp4Defs = defs
-        .filter((d: any) => d && d.format === "mp4" && d.videoUrl && !String(d.videoUrl).includes("/video/get_media"))
-        .map((d: any) => ({
-          quality: String(d.quality || d.height || "720"),
-          height: parseInt(d.height, 10) || parseInt(d.quality, 10) || 0,
-          url: String(d.videoUrl).replace(/\\\//g, "/").replace(/&amp;/g, "&"),
-        }))
-        .sort((a, b) => b.height - a.height);
-
-      const pushStream = (server: string, url: string, streamType: "m3u8" | "mp4", q: any) => {
-        if (!url || seen.has(url)) return;
-        seen.add(url);
-        streams.push({
-          server,
-          link: url,
-          type: streamType,
-          quality: q,
-          headers: streamHeaders,
-        });
-      };
-
-      if (isDownload) {
-        // Downloads prefer direct MP4 files first, then HLS
-        mp4Defs.forEach((v) => {
-          pushStream(`Direct MP4 ${v.quality}p`, v.url, "mp4", v.quality);
-        });
-        hlsDefs.forEach((v) => {
-          pushStream(`HLS ${v.quality}p`, v.url, "m3u8", v.quality);
-        });
-      } else {
-        // Playback: HLS master playlists are native adaptive streaming, followed by direct MP4
-        hlsDefs.forEach((v) => {
-          pushStream(`HLS ${v.quality}p`, v.url, "m3u8", v.quality);
-        });
-        mp4Defs.forEach((v) => {
-          pushStream(`Direct MP4 ${v.quality}p`, v.url, "mp4", v.quality);
-        });
-      }
-
-      if (streams.length > 0) {
-        return streams;
-      }
-    } catch (e) {
-      if (retry === 0) {
-        await new Promise((r) => setTimeout(r, 250));
-      }
+    for (const curBase of candidateBases) {
+      attemptMirror(curBase, 1);
     }
-  }
-}
+  });
 
-  return [];
+  if (!raceResult) return [];
+
+  const { defs, effectiveOrigin } = raceResult;
+  const streamHeaders = {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    Referer: `${effectiveOrigin}/`,
+    Origin: effectiveOrigin,
+  };
+
+  const streams: Stream[] = [];
+  const seen = new Set<string>();
+
+  const hlsDefs = defs
+    .filter((d: any) => d && d.format === "hls" && d.videoUrl && !String(d.videoUrl).includes("hv-h.phncdn.com"))
+    .map((d: any) => ({
+      quality: String(d.quality || d.height || "1080"),
+      height: parseInt(d.height, 10) || parseInt(d.quality, 10) || 0,
+      url: String(d.videoUrl).replace(/\\\//g, "/").replace(/&amp;/g, "&"),
+    }))
+    .sort((a, b) => b.height - a.height);
+
+  const mp4Defs = defs
+    .filter((d: any) => d && d.format === "mp4" && d.videoUrl && !String(d.videoUrl).includes("/video/get_media"))
+    .map((d: any) => ({
+      quality: String(d.quality || d.height || "720"),
+      height: parseInt(d.height, 10) || parseInt(d.quality, 10) || 0,
+      url: String(d.videoUrl).replace(/\\\//g, "/").replace(/&amp;/g, "&"),
+    }))
+    .sort((a, b) => b.height - a.height);
+
+  const pushStream = (server: string, url: string, streamType: "m3u8" | "mp4", q: any) => {
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    streams.push({
+      server,
+      link: url,
+      type: streamType,
+      quality: q,
+      headers: streamHeaders,
+    });
+  };
+
+  if (isDownload) {
+    // Downloads prefer direct MP4 files first, then HLS
+    mp4Defs.forEach((v) => {
+      pushStream(`Direct MP4 ${v.quality}p`, v.url, "mp4", v.quality);
+    });
+    hlsDefs.forEach((v) => {
+      pushStream(`HLS ${v.quality}p`, v.url, "m3u8", v.quality);
+    });
+  } else {
+    // Playback: HLS master playlists are native adaptive streaming, followed by direct MP4
+    hlsDefs.forEach((v) => {
+      pushStream(`HLS ${v.quality}p`, v.url, "m3u8", v.quality);
+    });
+    mp4Defs.forEach((v) => {
+      pushStream(`Direct MP4 ${v.quality}p`, v.url, "mp4", v.quality);
+    });
+  }
+
+  return streams;
 };

@@ -307,9 +307,10 @@ async function parseVideoGrid(options) {
           : durationText
         : hdTag || undefined;
 
-      var absoluteLink = rawHref.startsWith("http")
-        ? rawHref
-        : activeBase + (rawHref.startsWith("/") ? "" : "/") + rawHref;
+      var cleanHref = rawHref.replace(/\/THUMBNUM\//gi, "/0/");
+      var absoluteLink = cleanHref.startsWith("http")
+        ? cleanHref
+        : activeBase + (cleanHref.startsWith("/") ? "" : "/") + cleanHref;
 
       posts.push({
         title: rawTitle,

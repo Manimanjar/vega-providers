@@ -30,6 +30,12 @@ async function getBase(kvStore: any, axios: any): Promise<string> {
 
   if (kvStore && typeof kvStore.get === "function") {
     try {
+      const learned = await kvStore.get("xvideos_learnedDomain");
+      if (learned && typeof learned === "string" && learned.startsWith("http")) {
+        return learned.replace(/\/+$/, "");
+      }
+    } catch (e) {}
+    try {
       const cachedRaw = await kvStore.get(BASE_CACHE_KEY);
       if (cachedRaw) {
         const cached =
@@ -41,39 +47,73 @@ async function getBase(kvStore: any, axios: any): Promise<string> {
     } catch (e) {}
   }
 
-  if (axios) {
-    try {
-      const res = await axios.get(URLS_ENDPOINT, { timeout: 3000 });
-      if (res.data && typeof res.data === "object") {
-        memoryCache.data = res.data;
-        memoryCache.expiresAt = now + 3600000;
-        const entry = res.data["xvideos"];
-        if (entry && entry.url) {
-          const cleanEntry = entry.url.replace(/\/+$/, "");
-          if (kvStore && typeof kvStore.set === "function") {
-            try {
-              await kvStore.set(
-                BASE_CACHE_KEY,
-                JSON.stringify({ url: cleanEntry, expiresAt: now + 3600000 })
-              );
-            } catch (e) {}
-          }
-          return cleanEntry;
-        }
-      }
-    } catch (e) {}
-  }
-
-  if (kvStore && typeof kvStore.get === "function") {
-    try {
-      const learned = await kvStore.get("xvideos_learnedDomain");
-      if (learned && typeof learned === "string" && learned.startsWith("http")) {
-        return learned.replace(/\/+$/, "");
-      }
-    } catch (e) {}
-  }
-
   return DEFAULT_BASE_URL;
+}
+
+function raceMirrors(
+  candidateBases: string[],
+  pathPart: string,
+  axios: any,
+  commonHeaders: any,
+  maxAttemptsPerMirror = 3
+): Promise<{ html: string; workingBase: string; effectiveUrl: string } | null> {
+  return new Promise((resolve) => {
+    let resolved = false;
+    let pending = candidateBases.length;
+    if (pending === 0) {
+      resolve(null);
+      return;
+    }
+
+    const attemptMirror = (curBase: string, attempt: number) => {
+      if (resolved) return;
+      const targetUrl = `${curBase}${pathPart}`;
+      axios
+        .get(targetUrl, {
+          headers: {
+            ...commonHeaders,
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            Referer: `${curBase}/`,
+            Accept:
+              "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          },
+          timeout: 4500,
+          maxRedirects: 5,
+        })
+        .then((res: any) => {
+          if (resolved) return;
+          const html = typeof res.data === "string" ? res.data : "";
+          if (html.includes("html5player") || html.length > 500) {
+            resolved = true;
+            const finalUrl = res.request?.res?.responseUrl || targetUrl;
+            const hostMatch = finalUrl.match(/^https?:\/\/[^\/]+/);
+            resolve({
+              html,
+              workingBase: hostMatch ? hostMatch[0] : curBase,
+              effectiveUrl: finalUrl,
+            });
+            return;
+          }
+          pending--;
+          if (pending === 0 && !resolved) resolve(null);
+        })
+        .catch((err: any) => {
+          if (resolved) return;
+          const status = err?.response?.status;
+          if (!status && attempt < maxAttemptsPerMirror) {
+            setTimeout(() => attemptMirror(curBase, attempt + 1), 100);
+            return;
+          }
+          pending--;
+          if (pending === 0 && !resolved) resolve(null);
+        });
+    };
+
+    for (const curBase of candidateBases) {
+      attemptMirror(curBase, 1);
+    }
+  });
 }
 
 function parseDurationSeconds(text: string): number {
@@ -108,6 +148,7 @@ export const getMeta = async function ({
   if (!pathPart.startsWith("/")) {
     pathPart = "/" + pathPart;
   }
+  pathPart = pathPart.replace(/\/THUMBNUM\//gi, "/0/");
 
   const candidateBases = [
     baseUrl,
@@ -119,48 +160,21 @@ export const getMeta = async function ({
   let effectiveUrl = `${baseUrl}${pathPart}`;
 
   try {
-    let html = "";
-    let workingBase = baseUrl;
-
-    for (const curBase of candidateBases) {
-      const targetUrl = `${curBase}${pathPart}`;
-      for (let retry = 0; retry < 2; retry++) {
-        try {
-          const res = await axios.get(targetUrl, {
-            headers: {
-              ...commonHeaders,
-              "User-Agent":
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              Referer: `${curBase}/`,
-              Accept:
-                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            },
-            timeout: 8000,
-            maxRedirects: 5,
-          });
-          if (typeof res.data === "string" && res.data.includes("html5player")) {
-            html = res.data;
-            workingBase = curBase;
-            effectiveUrl = targetUrl;
-            break;
-          }
-          if (typeof res.data === "string" && res.data.length > 500) {
-            html = res.data;
-            workingBase = curBase;
-            effectiveUrl = targetUrl;
-            break;
-          }
-        } catch (e) {
-          if (retry === 0) {
-            await new Promise((r) => setTimeout(r, 250));
-          }
-        }
-      }
-      if (html) break;
+    let winner = await raceMirrors(candidateBases, pathPart, axios, commonHeaders);
+    if (!winner) {
+      // One fast retry wave if all mirrors had a transient blip
+      winner = await raceMirrors(candidateBases, pathPart, axios, commonHeaders);
+    }
+    if (!winner) {
+      throw new Error("No HTML returned from any XVideos mirror");
     }
 
-    if (!html) {
-      throw new Error("No HTML returned from any XVideos mirror");
+    const { html, workingBase } = winner;
+    effectiveUrl = winner.effectiveUrl;
+    if (kvStore && typeof kvStore.set === "function" && workingBase) {
+      try {
+        kvStore.set("xvideos_learnedDomain", workingBase);
+      } catch (e) {}
     }
 
     const $ = cheerio.load(html);

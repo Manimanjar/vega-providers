@@ -4,6 +4,7 @@ import { parsePartTitle, fetchSeriesParts, isExplicitSeriesTitle } from "../seri
 var URLS_ENDPOINT =
   "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
 var DEFAULT_BASE_URL = "https://de.pornhub.com";
+var BASE_CACHE_KEY = "pornhub_baseUrlCacheV1";
 var memoryCache = { data: null as any, expiresAt: 0 };
 
 async function getBase(kvStore: any, axios: any): Promise<string> {
@@ -14,6 +15,21 @@ async function getBase(kvStore: any, axios: any): Promise<string> {
         return custom.trim().replace(/\/+$/, "");
       }
     } catch (e) {}
+    try {
+      var learned = await kvStore.get("pornhub_learnedDomain");
+      if (learned && typeof learned === "string" && learned.startsWith("http")) {
+        return learned.replace(/\/+$/, "");
+      }
+    } catch (e) {}
+    try {
+      var cachedRaw = await kvStore.get(BASE_CACHE_KEY);
+      if (cachedRaw) {
+        var cached = typeof cachedRaw === "string" ? JSON.parse(cachedRaw) : cachedRaw;
+        if (cached && cached.url && cached.expiresAt > Date.now()) {
+          return String(cached.url).replace(/\/+$/, "");
+        }
+      }
+    } catch (e) {}
   }
   var now = Date.now();
   if (memoryCache.data && now < memoryCache.expiresAt) {
@@ -21,19 +37,6 @@ async function getBase(kvStore: any, axios: any): Promise<string> {
     if (cachedEntry && cachedEntry.url) {
       return cachedEntry.url.replace(/\/+$/, "");
     }
-  }
-  if (axios) {
-    try {
-      var res = await axios.get(URLS_ENDPOINT, { timeout: 3000 });
-      if (res.data && typeof res.data === "object") {
-        memoryCache.data = res.data;
-        memoryCache.expiresAt = now + 3600000;
-        var entry = res.data["pornhub"];
-        if (entry && entry.url) {
-          return entry.url.replace(/\/+$/, "");
-        }
-      }
-    } catch (e) {}
   }
   return DEFAULT_BASE_URL;
 }
@@ -98,28 +101,38 @@ async function fetchVideoById(
   axios: any,
   candidateBases: string[]
 ): Promise<any | null> {
-  for (const base of candidateBases) {
-    try {
+  const raceBases = candidateBases.slice(0, 4);
+  if (raceBases.length === 0) return null;
+  return new Promise((resolve) => {
+    let resolved = false;
+    let pending = raceBases.length;
+    for (const base of raceBases) {
       const apiUrl = `${base}/webmasters/video_by_id?id=${viewkey}&thumbsize=large_hd`;
-      const res = await axios.get(apiUrl, {
-        headers: {
-          Accept: "application/json, text/plain, */*",
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-          "Accept-Language": "en-US,en;q=0.9",
-          Referer: `${base}/`,
-          Cookie: "platform=pc; bs=0",
-        },
-        timeout: 3500,
-      });
-      if (res.data && res.data.video) {
-        return res.data.video;
-      }
-    } catch (e) {
-      // try next candidate base
+      axios
+        .get(apiUrl, {
+          headers: {
+            Accept: "application/json, text/plain, */*",
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+            Referer: `${base}/`,
+            Cookie: "platform=pc; bs=0",
+          },
+          timeout: 4500,
+        })
+        .then((res: any) => {
+          if (!resolved && res.data && res.data.video) {
+            resolved = true;
+            resolve(res.data.video);
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          pending--;
+          if (pending === 0 && !resolved) resolve(null);
+        });
     }
-  }
-  return null;
+  });
 }
 
 export const getMeta = async function ({

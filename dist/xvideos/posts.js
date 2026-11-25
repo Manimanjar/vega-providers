@@ -1,5 +1,5 @@
 // @vega-provider xvideos
-// @vega-version 2.4.1
+// @vega-version 2.4.2
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -576,7 +576,7 @@ async function getPooledSearchPage(opts) {
         }
         if (pagePosts.length === 0) {
           emptyStreak++;
-          if (emptyStreak >= 1) {
+          if (emptyStreak >= 2) {
             emptyStreak = 0;
             curTermIdx++;
             curTermPage = 1;
@@ -593,7 +593,7 @@ async function getPooledSearchPage(opts) {
         curTermPage++;
         if (pool.length === before) {
           dupStreak++;
-          if (dupStreak >= 5) {
+          if (dupStreak >= 8) {
             dupStreak = 0;
             curTermIdx++;
             curTermPage = 1;
@@ -626,7 +626,7 @@ async function getPooledSearchPage(opts) {
         fetchedPages = sp;
         if (pagePosts.length === 0) {
           emptyStreak++;
-          if (emptyStreak >= 2) break;
+          if (emptyStreak >= 3) break;
           continue;
         }
         emptyStreak = 0;
@@ -634,7 +634,7 @@ async function getPooledSearchPage(opts) {
         pool = dedupePosts(pool.concat(pagePosts));
         if (pool.length === before) {
           dupStreak++;
-          if (dupStreak >= 5) break;
+          if (dupStreak >= 8) break;
         } else {
           dupStreak = 0;
         }
@@ -1312,7 +1312,8 @@ async function parseVideoGrid(options) {
       var hdTag = $el.find(".video-hd-mark").first().text().trim();
       var durationText = formatDuration(durationSec) || duration || void 0;
       var cornerTag = durationText ? hdTag ? durationText + " \u2022 " + hdTag : durationText : hdTag || void 0;
-      var absoluteLink = rawHref.startsWith("http") ? rawHref : activeBase + (rawHref.startsWith("/") ? "" : "/") + rawHref;
+      var cleanHref = rawHref.replace(/\/THUMBNUM\//gi, "/0/");
+      var absoluteLink = cleanHref.startsWith("http") ? cleanHref : activeBase + (cleanHref.startsWith("/") ? "" : "/") + cleanHref;
       posts.push({
         title: rawTitle,
         link: absoluteLink,
