@@ -1,5 +1,5 @@
 // @vega-provider ddose007
-// @vega-version 1.0.2
+// @vega-version 1.0.3
 "use strict";
 "use strict";
 var __defProp = Object.defineProperty;
@@ -29,8 +29,8 @@ __export(domain_exports, {
 module.exports = __toCommonJS(domain_exports);
 var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
 var DEFAULT_BASE_URL = "https://ddose007.co";
-var BASE_CACHE_KEY = "ddose007_baseUrlCacheV3";
-var LEARNED_KEY = "ddose007_learnedDomain";
+var BASE_CACHE_KEY = "ddose007_baseUrlCacheV4";
+var LEARNED_KEY = "ddose007_learnedDomainV2";
 var CANDIDATE_MIRRORS = [
   "https://ddose007.co",
   "https://ddose007.cc"
@@ -39,7 +39,7 @@ var memoryCache = { url: "", expiresAt: 0 };
 async function isHealthyMirror(axios, mirror) {
   try {
     const res = await axios.get(mirror, {
-      timeout: 3500,
+      timeout: 4500,
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
       },
@@ -69,7 +69,9 @@ async function getBaseUrl(kvStore, axios) {
       const custom = await kvStore.get("baseUrlOverride");
       if (custom && typeof custom === "string" && custom.trim().length > 0) {
         const clean = custom.trim().replace(/\/+$/, "");
-        if (clean !== DEFAULT_BASE_URL) return clean;
+        if (clean !== DEFAULT_BASE_URL && !clean.includes("ddose007.cc") && !clean.includes("instavipclub")) {
+          return clean;
+        }
       }
     } catch (e) {
     }
@@ -95,7 +97,7 @@ async function getBaseUrl(kvStore, axios) {
   if (kvStore && typeof kvStore.get === "function") {
     try {
       const learned = await kvStore.get(LEARNED_KEY);
-      if (learned && typeof learned === "string" && learned.startsWith("http")) {
+      if (learned && typeof learned === "string" && learned.startsWith("http") && !learned.includes("instavipclub")) {
         return learned.replace(/\/+$/, "");
       }
     } catch (e) {
@@ -115,6 +117,15 @@ async function getBaseUrl(kvStore, axios) {
           if (await isHealthyMirror(axios, cleanUrl)) {
             memoryCache.url = cleanUrl;
             memoryCache.expiresAt = now + 18e5;
+            if (kvStore && typeof kvStore.set === "function") {
+              try {
+                await kvStore.set(
+                  BASE_CACHE_KEY,
+                  JSON.stringify({ url: cleanUrl, expiresAt: now + 18e5 })
+                );
+              } catch (e) {
+              }
+            }
             return cleanUrl;
           }
         }
@@ -130,6 +141,10 @@ async function getBaseUrl(kvStore, axios) {
       if (kvStore && typeof kvStore.set === "function") {
         try {
           await kvStore.set(LEARNED_KEY, probed);
+          await kvStore.set(
+            BASE_CACHE_KEY,
+            JSON.stringify({ url: probed, expiresAt: now + 18e5 })
+          );
         } catch (e) {
         }
       }
@@ -143,7 +158,7 @@ function recordRedirect(res, currentBase, kvStore) {
     try {
       const u = new URL(res.request.responseURL);
       const origin = u.origin.replace(/\/+$/, "");
-      if (origin && origin.startsWith("http") && origin !== currentBase) {
+      if (origin && origin.startsWith("http") && origin !== currentBase && !origin.includes("instavipclub")) {
         memoryCache.url = origin;
         memoryCache.expiresAt = Date.now() + 18e5;
         kvStore?.set(LEARNED_KEY, origin);

@@ -108,7 +108,7 @@ export async function getPosts(
   let targetUrl = baseUrl;
 
   if (!filter || filter === "homepage") {
-    targetUrl = page === 1 ? baseUrl : `${baseUrl}/page/${page}`;
+    targetUrl = page === 1 ? `${baseUrl}/` : `${baseUrl}/page/${page}/`;
   } else {
     const catCfg = getCategoryConfig(filter);
     if (catCfg) {
@@ -120,17 +120,18 @@ export async function getPosts(
       targetUrl =
         page === 1
           ? `${baseUrl}/${cleanFilter}/`
-          : `${baseUrl}/${cleanFilter}/page/${page}`;
+          : `${baseUrl}/${cleanFilter}/page/${page}/`;
     }
   }
 
   try {
     const res = await axios.get(targetUrl, {
-      timeout: 8000,
+      timeout: 9000,
       signal,
       headers: {
+        ...(providerContext?.commonHeaders || {}),
         "User-Agent": USER_AGENT,
-        Referer: baseUrl,
+        Referer: `${baseUrl}/`,
         Accept:
           "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
       },

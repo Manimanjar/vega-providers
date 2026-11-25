@@ -1,5 +1,5 @@
 // @vega-provider ddose007
-// @vega-version 1.0.2
+// @vega-version 1.0.3
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
