@@ -1,5 +1,5 @@
 // @vega-provider ddose007
-// @vega-version 1.0.1
+// @vega-version 1.0.2
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -384,47 +384,40 @@ var categories_config_default = {
 
 // providers/ddose007/domain.ts
 var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
-var DEFAULT_BASE_URL = "https://ddose007.cc";
-var BASE_CACHE_KEY = "ddose007_baseUrlCacheV2";
+var DEFAULT_BASE_URL = "https://ddose007.co";
+var BASE_CACHE_KEY = "ddose007_baseUrlCacheV3";
 var LEARNED_KEY = "ddose007_learnedDomain";
 var CANDIDATE_MIRRORS = [
+  "https://ddose007.co",
   "https://ddose007.cc"
 ];
 var memoryCache = { url: "", expiresAt: 0 };
+async function isHealthyMirror(axios, mirror) {
+  try {
+    const res = await axios.get(mirror, {
+      timeout: 3500,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+      },
+      maxRedirects: 3
+    });
+    if (res.status >= 200 && res.status < 400) {
+      const dataStr = typeof res.data === "string" ? res.data : "";
+      if (!dataStr.includes("Just a moment...") && !dataStr.includes("cf-mitigated") && !res.headers?.["cf-mitigated"]) {
+        return true;
+      }
+    }
+  } catch (e) {
+  }
+  return false;
+}
 async function probeMirrors(axios, mirrors) {
   if (!axios || !mirrors || mirrors.length === 0) return null;
-  return new Promise((resolve) => {
-    let resolved = false;
-    let pending = mirrors.length;
-    for (const mirror of mirrors) {
-      axios.get(mirror, {
-        timeout: 4e3,
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        },
-        maxRedirects: 3
-      }).then((res) => {
-        if (!resolved && res.status >= 200 && res.status < 400) {
-          resolved = true;
-          let origin = mirror;
-          if (res.request && res.request.responseURL) {
-            try {
-              origin = new URL(res.request.responseURL).origin;
-            } catch (e) {
-            }
-          }
-          resolve(origin.replace(/\/+$/, ""));
-        }
-      }).catch(() => {
-      }).finally(() => {
-        pending--;
-        if (pending === 0 && !resolved) resolve(null);
-      });
-    }
-    setTimeout(() => {
-      if (!resolved) resolve(null);
-    }, 4500);
-  });
+  for (const mirror of mirrors) {
+    const ok = await isHealthyMirror(axios, mirror);
+    if (ok) return mirror.replace(/\/+$/, "");
+  }
+  return null;
 }
 async function getBaseUrl(kvStore, axios) {
   if (kvStore && typeof kvStore.get === "function") {
@@ -475,9 +468,11 @@ async function getBaseUrl(kvStore, axios) {
         }
         if (entry.url && entry.url.startsWith("http")) {
           const cleanUrl = entry.url.replace(/\/+$/, "");
-          memoryCache.url = cleanUrl;
-          memoryCache.expiresAt = now + 18e5;
-          return cleanUrl;
+          if (await isHealthyMirror(axios, cleanUrl)) {
+            memoryCache.url = cleanUrl;
+            memoryCache.expiresAt = now + 18e5;
+            return cleanUrl;
+          }
         }
       }
     } catch (e) {
@@ -529,31 +524,31 @@ function normalizeUrl(url, baseUrl) {
 function getCategoryConfig(filter) {
   return categories_config_default.categories.find((c) => c.filter === filter);
 }
-function parseCards($, containerSelector, baseUrl) {
+function parseVideoBlocks($, baseUrl) {
   const posts = [];
   const seen = /* @__PURE__ */ new Set();
-  $(containerSelector).each((_, el) => {
+  $(".video-block").each((_, el) => {
     const $el = $(el);
-    const linkEl = $el.find("a.vg-card-link, a.row-thumb-link, a[href*='/video/'], a[href*='/watch/'], a").first();
-    const titleLinkEl = $el.find(".vg-card-title a, .title a, a[href*='/video/']").last();
-    const imgEl = $el.find("img.wp-post-image, img.row-thumb, img").first();
-    const durationEl = $el.find(".vg-duration, .duration").first();
-    const dateEl = $el.find(".vg-meta-date, .date, time").first();
-    let link = linkEl.attr("href") || titleLinkEl.attr("href") || "";
+    const linkEl = $el.find("a.thumb, a.infos, a").first();
+    const titleEl = $el.find("span.title, a.infos").first();
+    const imgEl = $el.find("img.video-img, img").first();
+    const durationEl = $el.find(".duration").first();
+    const viewsEl = $el.find(".views-number").first();
+    let link = linkEl.attr("href") || "";
     if (!link || link === "#" || link.startsWith("javascript:")) return;
     link = normalizeUrl(link, baseUrl);
     if (seen.has(link)) return;
     seen.add(link);
-    let image = imgEl.attr("data-src") || imgEl.attr("src") || imgEl.attr("data-lazyloaded") || "";
+    let image = imgEl.attr("data-src") || imgEl.attr("src") || imgEl.attr("data-lazy-src") || "";
     if (image.startsWith("data:")) {
       image = imgEl.attr("data-src") || "";
     }
     image = normalizeUrl(image, baseUrl);
-    let title = titleLinkEl.text().trim() || imgEl.attr("alt") || linkEl.attr("title") || "Untitled";
+    let title = titleEl.text().trim() || linkEl.attr("title") || imgEl.attr("alt") || "Untitled";
     title = title.replace(/\s+/g, " ").trim();
     if (!title || title.length < 2) return;
     const tag = durationEl.text().trim() || void 0;
-    const cornerTag = dateEl.text().trim() || void 0;
+    const cornerTag = viewsEl.text().trim() || void 0;
     posts.push({
       title,
       link,
@@ -587,16 +582,16 @@ async function getPosts(filterOrOptions, pageArg, signalArg, providerContextArg)
   const baseUrl = await getBaseUrl(kvStore, axios);
   let targetUrl = baseUrl;
   if (!filter || filter === "homepage") {
-    targetUrl = page === 1 ? baseUrl : `${baseUrl}/page/${page}/`;
+    targetUrl = page === 1 ? baseUrl : `${baseUrl}/page/${page}`;
   } else {
     const catCfg = getCategoryConfig(filter);
     if (catCfg) {
-      const query = catCfg.title.toLowerCase();
+      const query = (catCfg.title || filter).toLowerCase();
       const q = encodeURIComponent(query);
       targetUrl = page === 1 ? `${baseUrl}/?s=${q}` : `${baseUrl}/page/${page}/?s=${q}`;
     } else {
       const cleanFilter = filter.replace(/^\/+|\/+$/g, "");
-      targetUrl = page === 1 ? `${baseUrl}/${cleanFilter}/` : `${baseUrl}/${cleanFilter}/page/${page}/`;
+      targetUrl = page === 1 ? `${baseUrl}/${cleanFilter}/` : `${baseUrl}/${cleanFilter}/page/${page}`;
     }
   }
   try {
@@ -611,7 +606,7 @@ async function getPosts(filterOrOptions, pageArg, signalArg, providerContextArg)
     });
     recordRedirect(res, baseUrl, kvStore);
     const $ = cheerio.load(res.data);
-    return parseCards($, "article.vg-card, .video-card, .thumb-block, article", baseUrl);
+    return parseVideoBlocks($, baseUrl);
   } catch (e) {
     return [];
   }
@@ -651,7 +646,7 @@ async function getSearchPosts(queryOrOptions, pageArg, signalArg, providerContex
     });
     recordRedirect(res, baseUrl, kvStore);
     const $ = cheerio.load(res.data);
-    return parseCards($, "article.vg-card, .video-card, .thumb-block, article", baseUrl);
+    return parseVideoBlocks($, baseUrl);
   } catch (e) {
     return [];
   }

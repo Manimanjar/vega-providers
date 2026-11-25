@@ -53,8 +53,9 @@
   },
   "ddose007": {
     "name": "Ddose007",
-    "url": "https://ddose007.cc",
+    "url": "https://ddose007.co",
     "mirrors": [
+      "https://ddose007.co",
       "https://ddose007.cc"
     ]
   }

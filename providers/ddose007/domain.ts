@@ -2,58 +2,51 @@
 
 const URLS_ENDPOINT =
   "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
-const DEFAULT_BASE_URL = "https://ddose007.cc";
-const BASE_CACHE_KEY = "ddose007_baseUrlCacheV2";
+const DEFAULT_BASE_URL = "https://ddose007.co";
+const BASE_CACHE_KEY = "ddose007_baseUrlCacheV3";
 const LEARNED_KEY = "ddose007_learnedDomain";
 
 const CANDIDATE_MIRRORS = [
+  "https://ddose007.co",
   "https://ddose007.cc",
 ];
 
 let memoryCache = { url: "", expiresAt: 0 };
 
+async function isHealthyMirror(axios: any, mirror: string): Promise<boolean> {
+  try {
+    const res = await axios.get(mirror, {
+      timeout: 3500,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      },
+      maxRedirects: 3,
+    });
+    if (res.status >= 200 && res.status < 400) {
+      const dataStr = typeof res.data === "string" ? res.data : "";
+      if (
+        !dataStr.includes("Just a moment...") &&
+        !dataStr.includes("cf-mitigated") &&
+        !res.headers?.["cf-mitigated"]
+      ) {
+        return true;
+      }
+    }
+  } catch (e) {}
+  return false;
+}
+
 /**
- * Probes candidate mirrors in parallel and returns the first healthy alive mirror.
+ * Probes candidate mirrors in order and returns the first healthy alive mirror.
  */
 async function probeMirrors(axios: any, mirrors: string[]): Promise<string | null> {
   if (!axios || !mirrors || mirrors.length === 0) return null;
-  return new Promise((resolve) => {
-    let resolved = false;
-    let pending = mirrors.length;
-
-    for (const mirror of mirrors) {
-      axios
-        .get(mirror, {
-          timeout: 4000,
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-          },
-          maxRedirects: 3,
-        })
-        .then((res: any) => {
-          if (!resolved && res.status >= 200 && res.status < 400) {
-            resolved = true;
-            let origin = mirror;
-            if (res.request && res.request.responseURL) {
-              try {
-                origin = new URL(res.request.responseURL).origin;
-              } catch (e) {}
-            }
-            resolve(origin.replace(/\/+$/, ""));
-          }
-        })
-        .catch(() => {})
-        .finally(() => {
-          pending--;
-          if (pending === 0 && !resolved) resolve(null);
-        });
-    }
-
-    setTimeout(() => {
-      if (!resolved) resolve(null);
-    }, 4500);
-  });
+  for (const mirror of mirrors) {
+    const ok = await isHealthyMirror(axios, mirror);
+    if (ok) return mirror.replace(/\/+$/, "");
+  }
+  return null;
 }
 
 /**
@@ -122,9 +115,11 @@ export async function getBaseUrl(kvStore: any, axios: any): Promise<string> {
         }
         if (entry.url && entry.url.startsWith("http")) {
           const cleanUrl = entry.url.replace(/\/+$/, "");
-          memoryCache.url = cleanUrl;
-          memoryCache.expiresAt = now + 1800000;
-          return cleanUrl;
+          if (await isHealthyMirror(axios, cleanUrl)) {
+            memoryCache.url = cleanUrl;
+            memoryCache.expiresAt = now + 1800000;
+            return cleanUrl;
+          }
         }
       }
     } catch (e) {}

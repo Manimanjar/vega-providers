@@ -18,19 +18,19 @@ function getCategoryConfig(filter: string) {
   return config.categories.find((c) => c.filter === filter);
 }
 
-function parseCards($, containerSelector: string, baseUrl: string): Post[] {
+function parseVideoBlocks($, baseUrl: string): Post[] {
   const posts: Post[] = [];
   const seen = new Set<string>();
 
-  $(containerSelector).each((_: any, el: any) => {
+  $(".video-block").each((_: any, el: any) => {
     const $el = $(el);
-    const linkEl = $el.find("a.vg-card-link, a.row-thumb-link, a[href*='/video/'], a[href*='/watch/'], a").first();
-    const titleLinkEl = $el.find(".vg-card-title a, .title a, a[href*='/video/']").last();
-    const imgEl = $el.find("img.wp-post-image, img.row-thumb, img").first();
-    const durationEl = $el.find(".vg-duration, .duration").first();
-    const dateEl = $el.find(".vg-meta-date, .date, time").first();
+    const linkEl = $el.find("a.thumb, a.infos, a").first();
+    const titleEl = $el.find("span.title, a.infos").first();
+    const imgEl = $el.find("img.video-img, img").first();
+    const durationEl = $el.find(".duration").first();
+    const viewsEl = $el.find(".views-number").first();
 
-    let link = linkEl.attr("href") || titleLinkEl.attr("href") || "";
+    let link = linkEl.attr("href") || "";
     if (!link || link === "#" || link.startsWith("javascript:")) return;
     link = normalizeUrl(link, baseUrl);
 
@@ -40,7 +40,7 @@ function parseCards($, containerSelector: string, baseUrl: string): Post[] {
     let image =
       imgEl.attr("data-src") ||
       imgEl.attr("src") ||
-      imgEl.attr("data-lazyloaded") ||
+      imgEl.attr("data-lazy-src") ||
       "";
     if (image.startsWith("data:")) {
       image = imgEl.attr("data-src") || "";
@@ -48,16 +48,16 @@ function parseCards($, containerSelector: string, baseUrl: string): Post[] {
     image = normalizeUrl(image, baseUrl);
 
     let title =
-      titleLinkEl.text().trim() ||
-      imgEl.attr("alt") ||
+      titleEl.text().trim() ||
       linkEl.attr("title") ||
+      imgEl.attr("alt") ||
       "Untitled";
 
     title = title.replace(/\s+/g, " ").trim();
     if (!title || title.length < 2) return;
 
     const tag = durationEl.text().trim() || undefined;
-    const cornerTag = dateEl.text().trim() || undefined;
+    const cornerTag = viewsEl.text().trim() || undefined;
 
     posts.push({
       title,
@@ -108,12 +108,11 @@ export async function getPosts(
   let targetUrl = baseUrl;
 
   if (!filter || filter === "homepage") {
-    targetUrl = page === 1 ? baseUrl : `${baseUrl}/page/${page}/`;
+    targetUrl = page === 1 ? baseUrl : `${baseUrl}/page/${page}`;
   } else {
     const catCfg = getCategoryConfig(filter);
     if (catCfg) {
-      // Use query from category config
-      const query = catCfg.title.toLowerCase();
+      const query = (catCfg.title || filter).toLowerCase();
       const q = encodeURIComponent(query);
       targetUrl = page === 1 ? `${baseUrl}/?s=${q}` : `${baseUrl}/page/${page}/?s=${q}`;
     } else {
@@ -121,7 +120,7 @@ export async function getPosts(
       targetUrl =
         page === 1
           ? `${baseUrl}/${cleanFilter}/`
-          : `${baseUrl}/${cleanFilter}/page/${page}/`;
+          : `${baseUrl}/${cleanFilter}/page/${page}`;
     }
   }
 
@@ -140,7 +139,7 @@ export async function getPosts(
     recordRedirect(res, baseUrl, kvStore);
 
     const $ = cheerio.load(res.data);
-    return parseCards($, "article.vg-card, .video-card, .thumb-block, article", baseUrl);
+    return parseVideoBlocks($, baseUrl);
   } catch (e: any) {
     return [];
   }
@@ -200,7 +199,7 @@ export async function getSearchPosts(
     recordRedirect(res, baseUrl, kvStore);
 
     const $ = cheerio.load(res.data);
-    return parseCards($, "article.vg-card, .video-card, .thumb-block, article", baseUrl);
+    return parseVideoBlocks($, baseUrl);
   } catch (e: any) {
     return [];
   }

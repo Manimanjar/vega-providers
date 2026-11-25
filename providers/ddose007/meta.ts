@@ -58,28 +58,29 @@ export async function getMeta(
     const $ = cheerio.load(res.data);
 
     let title =
-      $("h1.vg-single-title").first().text().trim() ||
-      $("h1").first().text().trim() ||
+      $('meta[itemprop="name"]').attr("content") ||
       $('meta[property="og:title"]').attr("content") ||
-      $("title").text().trim();
+      $(".video-title h1").first().text().trim() ||
+      $("h1").first().text().trim() ||
+      $("title").text().replace(/\s*\|\s*DDose007.*$/i, "").trim();
 
     title = title.replace(/\s+/g, " ").trim();
 
     const synopsis =
-      $(".entry-content").first().text().trim() ||
+      $('meta[itemprop="description"]').attr("content") ||
       $('meta[property="og:description"]').attr("content") ||
-      $('meta[name="description"]').attr("content") ||
+      $(".video-details, .entry-content").first().text().trim() ||
       "";
 
     const image =
+      $('meta[itemprop="thumbnailUrl"]').attr("content") ||
       $('meta[property="og:image"]').attr("content") ||
-      $("img.wp-post-image").first().attr("data-src") ||
-      $("img.wp-post-image").first().attr("src") ||
+      $(".video-player img").first().attr("src") ||
       "";
 
     const tags: string[] = [];
-    $('.vg-card-meta a, a[rel="tag"], .entry-tags a').each((_: any, el: any) => {
-      const t = $(el).text().trim();
+    $('.video-cat-tag a, a[rel="tag"]').each((_: any, el: any) => {
+      const t = $(el).clone().children().remove().end().text().trim();
       if (t && !tags.includes(t)) tags.push(t);
     });
 
