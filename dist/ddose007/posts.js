@@ -27,6 +27,361 @@ __export(posts_exports, {
 });
 module.exports = __toCommonJS(posts_exports);
 
+// providers/categories.config.json
+var categories_config_default = {
+  categories: [
+    {
+      filter: "homepage",
+      mode: "random_feed",
+      rule34Tags: [],
+      title: "Homepage",
+      xvideosQueries: []
+    },
+    {
+      filter: "family",
+      mode: "keep_existing",
+      rule34Tags: [
+        "family",
+        "stepfamily",
+        "step_family"
+      ],
+      title: "Family",
+      xvideosQueries: [
+        "family",
+        "stepfamily",
+        "step+family"
+      ]
+    },
+    {
+      filter: "incest",
+      mode: "multi_query",
+      rule34Tags: [
+        "incest",
+        "family",
+        "taboo"
+      ],
+      title: "Incest",
+      xvideosQueries: [
+        "taboo",
+        "stepfamily",
+        "taboo+family"
+      ]
+    },
+    {
+      filter: "rel_sister",
+      mode: "multi_query",
+      rule34Tags: [
+        "sister",
+        "stepsister",
+        "cousin",
+        "sis",
+        "stepsis",
+        "older_sister",
+        "younger_sister",
+        "twin_sister",
+        "cousin_sister",
+        "cousin_sis",
+        "step_sister",
+        "sisters",
+        "stepsisters",
+        "cousins",
+        "sister-in-law",
+        "step_sister_in_law"
+      ],
+      title: "Sister",
+      xvideosQueries: [
+        "sister",
+        "stepsister",
+        "cousin",
+        "stepsis",
+        "sis",
+        "big+sister",
+        "little+sister",
+        "twin+sister",
+        "cousin+sis",
+        "cousin+sister",
+        "cousin+stepsis",
+        "cousin+step+sister",
+        "step+sister",
+        "sisters",
+        "stepsisters",
+        "cousins",
+        "sister+in+law",
+        "step+sister+in+law"
+      ]
+    },
+    {
+      filter: "rel_brother",
+      mode: "multi_query",
+      rule34Tags: [
+        "brother",
+        "stepbrother",
+        "cousin_brother",
+        "bro",
+        "stepbro",
+        "older_brother",
+        "younger_brother",
+        "cousin_bro",
+        "step_brother",
+        "brother-in-law",
+        "brothers",
+        "stepbrothers"
+      ],
+      title: "Brother",
+      xvideosQueries: [
+        "brother",
+        "stepbrother",
+        "cousin+brother",
+        "stepbro",
+        "bro",
+        "big+brother",
+        "younger+brother",
+        "cousin+bro",
+        "cousin+stepbrother",
+        "step+brother",
+        "brother+in+law",
+        "brothers",
+        "stepbrothers"
+      ]
+    },
+    {
+      filter: "rel_mom",
+      mode: "multi_query",
+      rule34Tags: [
+        "mother",
+        "mom",
+        "stepmother",
+        "stepmom",
+        "mommy",
+        "mother_and_son",
+        "cousin_mom",
+        "cousin_mother",
+        "step_mother",
+        "step_mom",
+        "mother-in-law",
+        "moms",
+        "mothers",
+        "stepmoms",
+        "stepmothers"
+      ],
+      title: "Mom",
+      xvideosQueries: [
+        "mom",
+        "mother",
+        "stepmom",
+        "stepmother",
+        "mommy",
+        "mama",
+        "cousin+mom",
+        "cousin+mother",
+        "step+mother",
+        "step+mom",
+        "mother+in+law",
+        "moms",
+        "mothers",
+        "stepmoms",
+        "stepmothers",
+        "maa"
+      ]
+    },
+    {
+      filter: "rel_daughter",
+      mode: "multi_query",
+      rule34Tags: [
+        "daughter",
+        "stepdaughter",
+        "father_and_daughter",
+        "mother_and_daughter",
+        "cousin_daughter",
+        "step_daughter",
+        "daughter-in-law",
+        "in_laws",
+        "in_law",
+        "daughters",
+        "stepdaughters",
+        "granddaughter",
+        "granddaughters"
+      ],
+      title: "Daughter",
+      xvideosQueries: [
+        "daughter",
+        "stepdaughter",
+        "daddy+daughter",
+        "cousin+daughter",
+        "step+daughter",
+        "daughter+in+law",
+        "in+laws",
+        "in+law",
+        "daughters",
+        "stepdaughters",
+        "granddaughter",
+        "granddaughters"
+      ]
+    },
+    {
+      filter: "rel_father",
+      mode: "multi_query",
+      rule34Tags: [
+        "father",
+        "dad",
+        "stepfather",
+        "stepdad",
+        "daddy",
+        "cousin_dad",
+        "cousin_father",
+        "step_father",
+        "father-in-law",
+        "fathers",
+        "stepfathers",
+        "papa"
+      ],
+      title: "Father",
+      xvideosQueries: [
+        "father",
+        "dad",
+        "stepdad",
+        "stepfather",
+        "daddy",
+        "cousin+dad",
+        "cousin+father",
+        "step+father",
+        "father+in+law",
+        "fathers",
+        "stepfathers",
+        "papa",
+        "paa"
+      ]
+    },
+    {
+      filter: "rel_aunt",
+      mode: "multi_query",
+      rule34Tags: [
+        "aunt",
+        "auntie",
+        "aunty",
+        "stepaunt",
+        "aunt_and_nephew",
+        "cousin_aunt",
+        "cousin_auntie",
+        "step_aunt",
+        "aunts"
+      ],
+      title: "Aunt",
+      xvideosQueries: [
+        "aunt",
+        "auntie",
+        "aunty",
+        "stepaunt",
+        "cousin+aunt",
+        "cousin+auntie",
+        "step+aunt",
+        "aunts",
+        "stepaunts"
+      ]
+    },
+    {
+      filter: "rel_grandma",
+      mode: "multi_query",
+      rule34Tags: [
+        "grandma",
+        "grandmother",
+        "granny",
+        "grand_mother",
+        "grannies",
+        "grandmothers",
+        "grandmas",
+        "step_grandma"
+      ],
+      title: "Grandma",
+      xvideosQueries: [
+        "grandma",
+        "grandmother",
+        "granny",
+        "grand+mother",
+        "grannies",
+        "grandmama",
+        "grandmothers",
+        "grandmas",
+        "step+grandma"
+      ]
+    },
+    {
+      filter: "rel_grandpa",
+      mode: "multi_query",
+      rule34Tags: [
+        "grandpa",
+        "grandfather",
+        "grand_father",
+        "grandpas",
+        "grandfathers",
+        "step_grandpa"
+      ],
+      title: "Grandpa",
+      xvideosQueries: [
+        "grandpa",
+        "grandfather",
+        "grand+father",
+        "grandad",
+        "grandpapa",
+        "grandpas",
+        "grandfathers",
+        "step+grandpa"
+      ]
+    },
+    {
+      filter: "rel_son",
+      mode: "multi_query",
+      rule34Tags: [
+        "son",
+        "stepson",
+        "step_son",
+        "sons",
+        "stepsons",
+        "grandson",
+        "grandsons"
+      ],
+      title: "Son",
+      xvideosQueries: [
+        "son",
+        "stepson",
+        "step+son",
+        "sons",
+        "stepsons",
+        "grandson",
+        "grandsons"
+      ]
+    },
+    {
+      filter: "rel_other",
+      mode: "multi_query",
+      rule34Tags: [
+        "uncle",
+        "niece",
+        "nephew",
+        "uncles",
+        "nieces",
+        "nephews",
+        "step_uncle",
+        "step_nephew",
+        "step_niece"
+      ],
+      title: "Other",
+      xvideosQueries: [
+        "uncle",
+        "niece",
+        "nephew",
+        "uncles",
+        "nieces",
+        "nephews",
+        "step+uncle",
+        "step+nephew",
+        "step+niece",
+        "grandparent"
+      ]
+    }
+  ]
+};
+
 // providers/ddose007/domain.ts
 var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
 var DEFAULT_BASE_URL = "https://instavipclub.com";
@@ -175,18 +530,21 @@ function normalizeUrl(url, baseUrl) {
   if (url.startsWith("http")) return url;
   return `${baseUrl}${url.startsWith("/") ? "" : "/"}${url}`;
 }
+function getCategoryConfig(filter) {
+  return categories_config_default.categories.find((c) => c.filter === filter);
+}
 function parseCards($, containerSelector, baseUrl) {
   const posts = [];
   const seen = /* @__PURE__ */ new Set();
   $(containerSelector).each((_, el) => {
     const $el = $(el);
-    const linkEl = $el.find("a.vg-card-link").first();
-    const titleLinkEl = $el.find(".vg-card-title a").first();
-    const imgEl = $el.find("img.wp-post-image").first();
-    const durationEl = $el.find(".vg-duration").first();
-    const dateEl = $el.find(".vg-meta-date").first();
+    const linkEl = $el.find("a.vg-card-link, a.row-thumb-link, a[href*='/video/'], a[href*='/watch/'], a").first();
+    const titleLinkEl = $el.find(".vg-card-title a, .title a, a[href*='/video/']").last();
+    const imgEl = $el.find("img.wp-post-image, img.row-thumb, img").first();
+    const durationEl = $el.find(".vg-duration, .duration").first();
+    const dateEl = $el.find(".vg-meta-date, .date, time").first();
     let link = linkEl.attr("href") || titleLinkEl.attr("href") || "";
-    if (!link) return;
+    if (!link || link === "#" || link.startsWith("javascript:")) return;
     link = normalizeUrl(link, baseUrl);
     if (seen.has(link)) return;
     seen.add(link);
@@ -197,6 +555,7 @@ function parseCards($, containerSelector, baseUrl) {
     image = normalizeUrl(image, baseUrl);
     let title = titleLinkEl.text().trim() || imgEl.attr("alt") || linkEl.attr("title") || "Untitled";
     title = title.replace(/\s+/g, " ").trim();
+    if (!title || title.length < 2) return;
     const tag = durationEl.text().trim() || void 0;
     const cornerTag = dateEl.text().trim() || void 0;
     posts.push({
@@ -231,11 +590,18 @@ async function getPosts(filterOrOptions, pageArg, signalArg, providerContextArg)
   if (!axios || !cheerio) return [];
   const baseUrl = await getBaseUrl(kvStore, axios);
   let targetUrl = baseUrl;
-  const cleanFilter = filter ? filter.replace(/^\/+|\/+$/g, "") : "";
-  if (!cleanFilter) {
+  if (!filter || filter === "homepage") {
     targetUrl = page === 1 ? baseUrl : `${baseUrl}/page/${page}/`;
   } else {
-    targetUrl = page === 1 ? `${baseUrl}/${cleanFilter}/` : `${baseUrl}/${cleanFilter}/page/${page}/`;
+    const catCfg = getCategoryConfig(filter);
+    if (catCfg) {
+      const query = catCfg.title.toLowerCase();
+      const q = encodeURIComponent(query);
+      targetUrl = page === 1 ? `${baseUrl}/?s=${q}` : `${baseUrl}/page/${page}/?s=${q}`;
+    } else {
+      const cleanFilter = filter.replace(/^\/+|\/+$/g, "");
+      targetUrl = page === 1 ? `${baseUrl}/${cleanFilter}/` : `${baseUrl}/${cleanFilter}/page/${page}/`;
+    }
   }
   try {
     const res = await axios.get(targetUrl, {
@@ -249,7 +615,7 @@ async function getPosts(filterOrOptions, pageArg, signalArg, providerContextArg)
     });
     recordRedirect(res, baseUrl, kvStore);
     const $ = cheerio.load(res.data);
-    return parseCards($, "article.vg-card", baseUrl);
+    return parseCards($, "article.vg-card, .video-card, .thumb-block, article", baseUrl);
   } catch (e) {
     return [];
   }
@@ -289,7 +655,7 @@ async function getSearchPosts(queryOrOptions, pageArg, signalArg, providerContex
     });
     recordRedirect(res, baseUrl, kvStore);
     const $ = cheerio.load(res.data);
-    return parseCards($, "article.vg-card", baseUrl);
+    return parseCards($, "article.vg-card, .video-card, .thumb-block, article", baseUrl);
   } catch (e) {
     return [];
   }

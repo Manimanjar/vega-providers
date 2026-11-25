@@ -1,4 +1,5 @@
 import { Post, ProviderContext } from "../types";
+import config from "../categories.config.json";
 import { getBaseUrl, recordRedirect } from "./domain";
 
 "use strict";
@@ -13,20 +14,24 @@ function normalizeUrl(url: string, baseUrl: string): string {
   return `${baseUrl}${url.startsWith("/") ? "" : "/"}${url}`;
 }
 
+function getCategoryConfig(filter: string) {
+  return config.categories.find((c) => c.filter === filter);
+}
+
 function parseCards($, containerSelector: string, baseUrl: string): Post[] {
   const posts: Post[] = [];
   const seen = new Set<string>();
 
   $(containerSelector).each((_: any, el: any) => {
     const $el = $(el);
-    const linkEl = $el.find("a.vg-card-link").first();
-    const titleLinkEl = $el.find(".vg-card-title a").first();
-    const imgEl = $el.find("img.wp-post-image").first();
-    const durationEl = $el.find(".vg-duration").first();
-    const dateEl = $el.find(".vg-meta-date").first();
+    const linkEl = $el.find("a.vg-card-link, a.row-thumb-link, a[href*='/video/'], a[href*='/watch/'], a").first();
+    const titleLinkEl = $el.find(".vg-card-title a, .title a, a[href*='/video/']").last();
+    const imgEl = $el.find("img.wp-post-image, img.row-thumb, img").first();
+    const durationEl = $el.find(".vg-duration, .duration").first();
+    const dateEl = $el.find(".vg-meta-date, .date, time").first();
 
     let link = linkEl.attr("href") || titleLinkEl.attr("href") || "";
-    if (!link) return;
+    if (!link || link === "#" || link.startsWith("javascript:")) return;
     link = normalizeUrl(link, baseUrl);
 
     if (seen.has(link)) return;
@@ -49,6 +54,7 @@ function parseCards($, containerSelector: string, baseUrl: string): Post[] {
       "Untitled";
 
     title = title.replace(/\s+/g, " ").trim();
+    if (!title || title.length < 2) return;
 
     const tag = durationEl.text().trim() || undefined;
     const cornerTag = dateEl.text().trim() || undefined;
@@ -101,15 +107,22 @@ export async function getPosts(
   const baseUrl = await getBaseUrl(kvStore, axios);
   let targetUrl = baseUrl;
 
-  const cleanFilter = filter ? filter.replace(/^\/+|\/+$/g, "") : "";
-
-  if (!cleanFilter) {
+  if (!filter || filter === "homepage") {
     targetUrl = page === 1 ? baseUrl : `${baseUrl}/page/${page}/`;
   } else {
-    targetUrl =
-      page === 1
-        ? `${baseUrl}/${cleanFilter}/`
-        : `${baseUrl}/${cleanFilter}/page/${page}/`;
+    const catCfg = getCategoryConfig(filter);
+    if (catCfg) {
+      // Use query from category config
+      const query = catCfg.title.toLowerCase();
+      const q = encodeURIComponent(query);
+      targetUrl = page === 1 ? `${baseUrl}/?s=${q}` : `${baseUrl}/page/${page}/?s=${q}`;
+    } else {
+      const cleanFilter = filter.replace(/^\/+|\/+$/g, "");
+      targetUrl =
+        page === 1
+          ? `${baseUrl}/${cleanFilter}/`
+          : `${baseUrl}/${cleanFilter}/page/${page}/`;
+    }
   }
 
   try {
@@ -127,7 +140,7 @@ export async function getPosts(
     recordRedirect(res, baseUrl, kvStore);
 
     const $ = cheerio.load(res.data);
-    return parseCards($, "article.vg-card", baseUrl);
+    return parseCards($, "article.vg-card, .video-card, .thumb-block, article", baseUrl);
   } catch (e: any) {
     return [];
   }
@@ -187,7 +200,7 @@ export async function getSearchPosts(
     recordRedirect(res, baseUrl, kvStore);
 
     const $ = cheerio.load(res.data);
-    return parseCards($, "article.vg-card", baseUrl);
+    return parseCards($, "article.vg-card, .video-card, .thumb-block, article", baseUrl);
   } catch (e: any) {
     return [];
   }
