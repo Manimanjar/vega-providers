@@ -43,5 +43,14 @@
         "type": "global",
         "disabled": false,
         "hasSettings": true
+    },
+    {
+        "display_name": "Ddose007",
+        "value": "ddose007",
+        "version": "1.0.0",
+        "icon": "https://instavipclub.com/wp-content/uploads/2026/09/cropped-1789069541669-192x192.png",
+        "type": "global",
+        "disabled": false,
+        "hasSettings": true
     }
 ]
