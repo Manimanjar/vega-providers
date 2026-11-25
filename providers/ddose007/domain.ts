@@ -2,16 +2,12 @@
 
 const URLS_ENDPOINT =
   "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
-const DEFAULT_BASE_URL = "https://instavipclub.com";
-const BASE_CACHE_KEY = "ddose007_baseUrlCacheV1";
+const DEFAULT_BASE_URL = "https://ddose007.cc";
+const BASE_CACHE_KEY = "ddose007_baseUrlCacheV2";
 const LEARNED_KEY = "ddose007_learnedDomain";
 
 const CANDIDATE_MIRRORS = [
-  "https://instavipclub.com",
-  "https://instavipclub.net",
   "https://ddose007.cc",
-  "https://ddose007.net",
-  "https://ddose007.com",
 ];
 
 let memoryCache = { url: "", expiresAt: 0 };

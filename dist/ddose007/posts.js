@@ -1,5 +1,5 @@
 // @vega-provider ddose007
-// @vega-version 1.0.0
+// @vega-version 1.0.1
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -384,15 +384,11 @@ var categories_config_default = {
 
 // providers/ddose007/domain.ts
 var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
-var DEFAULT_BASE_URL = "https://instavipclub.com";
-var BASE_CACHE_KEY = "ddose007_baseUrlCacheV1";
+var DEFAULT_BASE_URL = "https://ddose007.cc";
+var BASE_CACHE_KEY = "ddose007_baseUrlCacheV2";
 var LEARNED_KEY = "ddose007_learnedDomain";
 var CANDIDATE_MIRRORS = [
-  "https://instavipclub.com",
-  "https://instavipclub.net",
-  "https://ddose007.cc",
-  "https://ddose007.net",
-  "https://ddose007.com"
+  "https://ddose007.cc"
 ];
 var memoryCache = { url: "", expiresAt: 0 };
 async function probeMirrors(axios, mirrors) {
