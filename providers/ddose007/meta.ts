@@ -72,11 +72,16 @@ export async function getMeta(
       $(".video-details, .entry-content").first().text().trim() ||
       "";
 
-    const image =
+    let image =
       $('meta[itemprop="thumbnailUrl"]').attr("content") ||
       $('meta[property="og:image"]').attr("content") ||
       $(".video-player img").first().attr("src") ||
       "";
+    if (image && image.includes("pvtcdn.com")) {
+      image = `https://vega-tv.vercel.app/api/proxy?url=${encodeURIComponent(
+        image
+      )}&referer=${encodeURIComponent(baseUrl + "/")}`;
+    }
 
     const tags: string[] = [];
     $('.video-cat-tag a, a[rel="tag"]').each((_: any, el: any) => {

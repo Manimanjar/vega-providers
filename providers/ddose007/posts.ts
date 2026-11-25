@@ -14,6 +14,16 @@ function normalizeUrl(url: string, baseUrl: string): string {
   return `${baseUrl}${url.startsWith("/") ? "" : "/"}${url}`;
 }
 
+function wrapImageProxy(imageUrl: string, baseUrl: string): string {
+  if (!imageUrl) return "";
+  if (imageUrl.includes("pvtcdn.com")) {
+    return `https://vega-tv.vercel.app/api/proxy?url=${encodeURIComponent(
+      imageUrl
+    )}&referer=${encodeURIComponent(baseUrl + "/")}`;
+  }
+  return imageUrl;
+}
+
 function getCategoryConfig(filter: string) {
   return config.categories.find((c) => c.filter === filter);
 }
@@ -45,7 +55,7 @@ function parseVideoBlocks($, baseUrl: string): Post[] {
     if (image.startsWith("data:")) {
       image = imgEl.attr("data-src") || "";
     }
-    image = normalizeUrl(image, baseUrl);
+    image = wrapImageProxy(normalizeUrl(image, baseUrl), baseUrl);
 
     let title =
       titleEl.text().trim() ||

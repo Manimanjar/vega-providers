@@ -1,5 +1,5 @@
 // @vega-provider ddose007
-// @vega-version 1.0.3
+// @vega-version 1.0.4
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -536,6 +536,15 @@ function normalizeUrl(url, baseUrl) {
   if (url.startsWith("http")) return url;
   return `${baseUrl}${url.startsWith("/") ? "" : "/"}${url}`;
 }
+function wrapImageProxy(imageUrl, baseUrl) {
+  if (!imageUrl) return "";
+  if (imageUrl.includes("pvtcdn.com")) {
+    return `https://vega-tv.vercel.app/api/proxy?url=${encodeURIComponent(
+      imageUrl
+    )}&referer=${encodeURIComponent(baseUrl + "/")}`;
+  }
+  return imageUrl;
+}
 function getCategoryConfig(filter) {
   return categories_config_default.categories.find((c) => c.filter === filter);
 }
@@ -558,7 +567,7 @@ function parseVideoBlocks($, baseUrl) {
     if (image.startsWith("data:")) {
       image = imgEl.attr("data-src") || "";
     }
-    image = normalizeUrl(image, baseUrl);
+    image = wrapImageProxy(normalizeUrl(image, baseUrl), baseUrl);
     let title = titleEl.text().trim() || linkEl.attr("title") || imgEl.attr("alt") || "Untitled";
     title = title.replace(/\s+/g, " ").trim();
     if (!title || title.length < 2) return;

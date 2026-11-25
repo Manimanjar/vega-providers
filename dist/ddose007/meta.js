@@ -1,5 +1,5 @@
 // @vega-provider ddose007
-// @vega-version 1.0.3
+// @vega-version 1.0.4
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -212,7 +212,12 @@ async function getMeta(linkOrOptions, providerContextArg) {
     let title = $('meta[itemprop="name"]').attr("content") || $('meta[property="og:title"]').attr("content") || $(".video-title h1").first().text().trim() || $("h1").first().text().trim() || $("title").text().replace(/\s*\|\s*DDose007.*$/i, "").trim();
     title = title.replace(/\s+/g, " ").trim();
     const synopsis = $('meta[itemprop="description"]').attr("content") || $('meta[property="og:description"]').attr("content") || $(".video-details, .entry-content").first().text().trim() || "";
-    const image = $('meta[itemprop="thumbnailUrl"]').attr("content") || $('meta[property="og:image"]').attr("content") || $(".video-player img").first().attr("src") || "";
+    let image = $('meta[itemprop="thumbnailUrl"]').attr("content") || $('meta[property="og:image"]').attr("content") || $(".video-player img").first().attr("src") || "";
+    if (image && image.includes("pvtcdn.com")) {
+      image = `https://vega-tv.vercel.app/api/proxy?url=${encodeURIComponent(
+        image
+      )}&referer=${encodeURIComponent(baseUrl + "/")}`;
+    }
     const tags = [];
     $('.video-cat-tag a, a[rel="tag"]').each((_, el) => {
       const t = $(el).clone().children().remove().end().text().trim();
