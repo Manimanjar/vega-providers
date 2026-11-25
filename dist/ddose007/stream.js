@@ -1,5 +1,5 @@
 // @vega-provider ddose007
-// @vega-version 1.0.4
+// @vega-version 1.1.0
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -28,12 +28,13 @@ module.exports = __toCommonJS(stream_exports);
 
 // providers/ddose007/domain.ts
 var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
-var DEFAULT_BASE_URL = "https://ddose007.co";
+var DEFAULT_BASE_URL = "https://ddose007.tv";
 var BASE_CACHE_KEY = "ddose007_baseUrlCacheV4";
 var LEARNED_KEY = "ddose007_learnedDomainV2";
 var CANDIDATE_MIRRORS = [
-  "https://ddose007.co",
-  "https://ddose007.cc"
+  "https://ddose007.tv",
+  "https://ddose007.rest",
+  "https://ddose007.homes"
 ];
 var memoryCache = { url: "", expiresAt: 0 };
 async function isHealthyMirror(axios, mirror) {
@@ -156,6 +157,42 @@ async function getBaseUrl(kvStore, axios) {
 
 // providers/ddose007/stream.ts
 var USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+var DEAD_EMBED_MP4 = "https://video.downloaddirect.xyz/embed.mp4";
+function isPlayableMp4(url) {
+  if (!url || typeof url !== "string") return false;
+  const clean = url.trim();
+  if (!/^https?:\/\//i.test(clean)) return false;
+  if (!/\.mp4(\?|#|$)/i.test(clean)) return false;
+  if (clean === DEAD_EMBED_MP4 || clean.endsWith("/embed.mp4")) return false;
+  return true;
+}
+function extractVideoUrl(pageHtml) {
+  const ldMatches = pageHtml.match(
+    /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
+  );
+  if (ldMatches) {
+    for (const block of ldMatches) {
+      const inner = block.replace(/<script[^>]*>/i, "").replace(/<\/script>/i, "");
+      try {
+        const data = JSON.parse(inner);
+        const objects = Array.isArray(data) ? data : [data];
+        for (const obj of objects) {
+          if (obj && obj["@type"] === "VideoObject" && obj.contentUrl) {
+            const url = String(obj.contentUrl).trim();
+            if (isPlayableMp4(url)) return url;
+            if (url === DEAD_EMBED_MP4 || url.endsWith("/embed.mp4")) return "";
+          }
+        }
+      } catch (e) {
+      }
+    }
+  }
+  const anyMp4 = pageHtml.match(/https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*/i);
+  if (anyMp4 && isPlayableMp4(anyMp4[0])) {
+    return anyMp4[0].replace(/\\+$/, "");
+  }
+  return "";
+}
 async function getStream(linkOrOptions, typeArg, signalArg, providerContextArg, isDownloadArg) {
   let link = "";
   let signal = null;
@@ -188,43 +225,20 @@ async function getStream(linkOrOptions, typeArg, signalArg, providerContextArg, 
       }
     });
     const pageHtml = String(pageRes.data || "");
-    const $ = cheerio.load(pageHtml);
-    const streams = [];
-    const headers = {
-      Referer: `${baseUrl}/`,
-      "User-Agent": USER_AGENT
-    };
-    let directUrl = $('meta[itemprop="contentURL"]').attr("content") || "";
-    if (!directUrl) {
-      $("source").each((_, el) => {
-        const src = $(el).attr("src") || "";
-        if (src && (src.includes(".mp4") || src.includes(".m3u8")) && !directUrl) {
-          directUrl = src;
-        }
-      });
-    }
-    if (!directUrl) {
-      const pvtMatch = pageHtml.match(
-        /https?:\/\/[a-zA-Z0-9_.-]*(?:pvtcdn\.com|ddose007)[^\s"'<>]+\.mp4/i
-      );
-      if (pvtMatch) directUrl = pvtMatch[0];
-    }
-    if (!directUrl) {
-      const anyMp4 = pageHtml.match(
-        /https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*/i
-      );
-      if (anyMp4) directUrl = anyMp4[0];
-    }
+    const directUrl = extractVideoUrl(pageHtml);
     if (directUrl) {
-      const isM3u8 = directUrl.includes(".m3u8");
-      streams.push({
-        server: "Ddose Direct High Speed (1080p)",
-        link: directUrl,
-        type: isM3u8 ? "m3u8" : "mp4",
-        quality: "1080",
-        headers
-      });
-      return streams;
+      return [
+        {
+          server: "Ddose Direct",
+          link: directUrl,
+          type: "mp4",
+          quality: "HD",
+          headers: {
+            Referer: `${baseUrl}/`,
+            "User-Agent": USER_AGENT
+          }
+        }
+      ];
     }
     return [];
   } catch (e) {
