@@ -2,16 +2,13 @@
 
 const URLS_ENDPOINT =
   "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
-const DEFAULT_BASE_URL = "https://ddose007.tv";
+const DEFAULT_BASE_URL = "https://ddose007.co";
 const BASE_CACHE_KEY = "ddose007_baseUrlCacheV4";
 const LEARNED_KEY = "ddose007_learnedDomainV2";
 
-// Live domains verified 2026-11-25: ddose007.tv (200) and ddose007.rest (200,
-// redirects to ddose007.homes). The old .co/.cc domains return HTTP 403.
 const CANDIDATE_MIRRORS = [
-  "https://ddose007.tv",
-  "https://ddose007.rest",
-  "https://ddose007.homes",
+  "https://ddose007.co",
+  "https://ddose007.cc",
 ];
 
 let memoryCache = { url: "", expiresAt: 0 };

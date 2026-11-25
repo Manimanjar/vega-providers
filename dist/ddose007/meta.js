@@ -1,5 +1,5 @@
 // @vega-provider ddose007
-// @vega-version 1.1.0
+// @vega-version 1.0.4
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -28,13 +28,12 @@ module.exports = __toCommonJS(meta_exports);
 
 // providers/ddose007/domain.ts
 var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
-var DEFAULT_BASE_URL = "https://ddose007.tv";
+var DEFAULT_BASE_URL = "https://ddose007.co";
 var BASE_CACHE_KEY = "ddose007_baseUrlCacheV4";
 var LEARNED_KEY = "ddose007_learnedDomainV2";
 var CANDIDATE_MIRRORS = [
-  "https://ddose007.tv",
-  "https://ddose007.rest",
-  "https://ddose007.homes"
+  "https://ddose007.co",
+  "https://ddose007.cc"
 ];
 var memoryCache = { url: "", expiresAt: 0 };
 async function isHealthyMirror(axios, mirror) {
@@ -209,37 +208,11 @@ async function getMeta(linkOrOptions, providerContextArg) {
       }
     });
     recordRedirect(res, baseUrl, kvStore);
-    const pageHtml = String(res.data || "");
-    const $ = cheerio.load(pageHtml);
-    let ldTitle = "";
-    let ldDesc = "";
-    let ldImage = "";
-    const ldMatches = pageHtml.match(
-      /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
-    );
-    if (ldMatches) {
-      for (const block of ldMatches) {
-        const inner = block.replace(/<script[^>]*>/i, "").replace(/<\/script>/i, "");
-        try {
-          const data = JSON.parse(inner);
-          const objects = Array.isArray(data) ? data : [data];
-          for (const obj of objects) {
-            if (obj && obj["@type"] === "VideoObject") {
-              ldTitle = String(obj.name || "");
-              ldDesc = String(obj.description || "");
-              ldImage = String(obj.thumbnailUrl || "");
-              break;
-            }
-          }
-        } catch (e) {
-        }
-        if (ldTitle) break;
-      }
-    }
-    let title = ldTitle || $('meta[itemprop="name"]').attr("content") || $('meta[property="og:title"]').attr("content") || $(".video-title h1").first().text().trim() || $("h1").first().text().trim() || $("title").text().replace(/\s*\|\s*DDose007.*$/i, "").trim();
+    const $ = cheerio.load(res.data);
+    let title = $('meta[itemprop="name"]').attr("content") || $('meta[property="og:title"]').attr("content") || $(".video-title h1").first().text().trim() || $("h1").first().text().trim() || $("title").text().replace(/\s*\|\s*DDose007.*$/i, "").trim();
     title = title.replace(/\s+/g, " ").trim();
-    const synopsis = ldDesc || $('meta[itemprop="description"]').attr("content") || $('meta[property="og:description"]').attr("content") || $(".video-details, .entry-content").first().text().trim() || "";
-    let image = ldImage || $('meta[itemprop="thumbnailUrl"]').attr("content") || $('meta[property="og:image"]').attr("content") || $(".video-player img").first().attr("src") || "";
+    const synopsis = $('meta[itemprop="description"]').attr("content") || $('meta[property="og:description"]').attr("content") || $(".video-details, .entry-content").first().text().trim() || "";
+    let image = $('meta[itemprop="thumbnailUrl"]').attr("content") || $('meta[property="og:image"]').attr("content") || $(".video-player img").first().attr("src") || "";
     if (image && image.includes("pvtcdn.com")) {
       image = `https://vega-tv.vercel.app/api/proxy?url=${encodeURIComponent(
         image

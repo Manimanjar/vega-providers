@@ -1,5 +1,5 @@
 // @vega-provider ddose007
-// @vega-version 1.1.0
+// @vega-version 1.0.4
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -27,15 +27,369 @@ __export(posts_exports, {
 });
 module.exports = __toCommonJS(posts_exports);
 
+// providers/categories.config.json
+var categories_config_default = {
+  categories: [
+    {
+      filter: "homepage",
+      mode: "random_feed",
+      rule34Tags: [],
+      title: "Homepage",
+      xvideosQueries: []
+    },
+    {
+      filter: "family",
+      mode: "keep_existing",
+      rule34Tags: [
+        "family",
+        "stepfamily",
+        "step_family"
+      ],
+      title: "Family",
+      xvideosQueries: [
+        "family",
+        "stepfamily",
+        "step+family"
+      ]
+    },
+    {
+      filter: "incest",
+      mode: "multi_query",
+      rule34Tags: [
+        "incest",
+        "family",
+        "taboo"
+      ],
+      title: "Incest",
+      xvideosQueries: [
+        "taboo",
+        "stepfamily",
+        "taboo+family"
+      ]
+    },
+    {
+      filter: "rel_sister",
+      mode: "multi_query",
+      rule34Tags: [
+        "sister",
+        "stepsister",
+        "cousin",
+        "sis",
+        "stepsis",
+        "older_sister",
+        "younger_sister",
+        "twin_sister",
+        "cousin_sister",
+        "cousin_sis",
+        "step_sister",
+        "sisters",
+        "stepsisters",
+        "cousins",
+        "sister-in-law",
+        "step_sister_in_law"
+      ],
+      title: "Sister",
+      xvideosQueries: [
+        "sister",
+        "stepsister",
+        "cousin",
+        "stepsis",
+        "sis",
+        "big+sister",
+        "little+sister",
+        "twin+sister",
+        "cousin+sis",
+        "cousin+sister",
+        "cousin+stepsis",
+        "cousin+step+sister",
+        "step+sister",
+        "sisters",
+        "stepsisters",
+        "cousins",
+        "sister+in+law",
+        "step+sister+in+law"
+      ]
+    },
+    {
+      filter: "rel_brother",
+      mode: "multi_query",
+      rule34Tags: [
+        "brother",
+        "stepbrother",
+        "cousin_brother",
+        "bro",
+        "stepbro",
+        "older_brother",
+        "younger_brother",
+        "cousin_bro",
+        "step_brother",
+        "brother-in-law",
+        "brothers",
+        "stepbrothers"
+      ],
+      title: "Brother",
+      xvideosQueries: [
+        "brother",
+        "stepbrother",
+        "cousin+brother",
+        "stepbro",
+        "bro",
+        "big+brother",
+        "younger+brother",
+        "cousin+bro",
+        "cousin+stepbrother",
+        "step+brother",
+        "brother+in+law",
+        "brothers",
+        "stepbrothers"
+      ]
+    },
+    {
+      filter: "rel_mom",
+      mode: "multi_query",
+      rule34Tags: [
+        "mother",
+        "mom",
+        "stepmother",
+        "stepmom",
+        "mommy",
+        "mother_and_son",
+        "cousin_mom",
+        "cousin_mother",
+        "step_mother",
+        "step_mom",
+        "mother-in-law",
+        "moms",
+        "mothers",
+        "stepmoms",
+        "stepmothers"
+      ],
+      title: "Mom",
+      xvideosQueries: [
+        "mom",
+        "mother",
+        "stepmom",
+        "stepmother",
+        "mommy",
+        "mama",
+        "cousin+mom",
+        "cousin+mother",
+        "step+mother",
+        "step+mom",
+        "mother+in+law",
+        "moms",
+        "mothers",
+        "stepmoms",
+        "stepmothers",
+        "maa"
+      ]
+    },
+    {
+      filter: "rel_daughter",
+      mode: "multi_query",
+      rule34Tags: [
+        "daughter",
+        "stepdaughter",
+        "father_and_daughter",
+        "mother_and_daughter",
+        "cousin_daughter",
+        "step_daughter",
+        "daughter-in-law",
+        "in_laws",
+        "in_law",
+        "daughters",
+        "stepdaughters",
+        "granddaughter",
+        "granddaughters"
+      ],
+      title: "Daughter",
+      xvideosQueries: [
+        "daughter",
+        "stepdaughter",
+        "daddy+daughter",
+        "cousin+daughter",
+        "step+daughter",
+        "daughter+in+law",
+        "in+laws",
+        "in+law",
+        "daughters",
+        "stepdaughters",
+        "granddaughter",
+        "granddaughters"
+      ]
+    },
+    {
+      filter: "rel_father",
+      mode: "multi_query",
+      rule34Tags: [
+        "father",
+        "dad",
+        "stepfather",
+        "stepdad",
+        "daddy",
+        "cousin_dad",
+        "cousin_father",
+        "step_father",
+        "father-in-law",
+        "fathers",
+        "stepfathers",
+        "papa"
+      ],
+      title: "Father",
+      xvideosQueries: [
+        "father",
+        "dad",
+        "stepdad",
+        "stepfather",
+        "daddy",
+        "cousin+dad",
+        "cousin+father",
+        "step+father",
+        "father+in+law",
+        "fathers",
+        "stepfathers",
+        "papa",
+        "paa"
+      ]
+    },
+    {
+      filter: "rel_aunt",
+      mode: "multi_query",
+      rule34Tags: [
+        "aunt",
+        "auntie",
+        "aunty",
+        "stepaunt",
+        "aunt_and_nephew",
+        "cousin_aunt",
+        "cousin_auntie",
+        "step_aunt",
+        "aunts"
+      ],
+      title: "Aunt",
+      xvideosQueries: [
+        "aunt",
+        "auntie",
+        "aunty",
+        "stepaunt",
+        "cousin+aunt",
+        "cousin+auntie",
+        "step+aunt",
+        "aunts",
+        "stepaunts"
+      ]
+    },
+    {
+      filter: "rel_grandma",
+      mode: "multi_query",
+      rule34Tags: [
+        "grandma",
+        "grandmother",
+        "granny",
+        "grand_mother",
+        "grannies",
+        "grandmothers",
+        "grandmas",
+        "step_grandma"
+      ],
+      title: "Grandma",
+      xvideosQueries: [
+        "grandma",
+        "grandmother",
+        "granny",
+        "grand+mother",
+        "grannies",
+        "grandmama",
+        "grandmothers",
+        "grandmas",
+        "step+grandma"
+      ]
+    },
+    {
+      filter: "rel_grandpa",
+      mode: "multi_query",
+      rule34Tags: [
+        "grandpa",
+        "grandfather",
+        "grand_father",
+        "grandpas",
+        "grandfathers",
+        "step_grandpa"
+      ],
+      title: "Grandpa",
+      xvideosQueries: [
+        "grandpa",
+        "grandfather",
+        "grand+father",
+        "grandad",
+        "grandpapa",
+        "grandpas",
+        "grandfathers",
+        "step+grandpa"
+      ]
+    },
+    {
+      filter: "rel_son",
+      mode: "multi_query",
+      rule34Tags: [
+        "son",
+        "stepson",
+        "step_son",
+        "sons",
+        "stepsons",
+        "grandson",
+        "grandsons"
+      ],
+      title: "Son",
+      xvideosQueries: [
+        "son",
+        "stepson",
+        "step+son",
+        "sons",
+        "stepsons",
+        "grandson",
+        "grandsons"
+      ]
+    },
+    {
+      filter: "rel_other",
+      mode: "multi_query",
+      rule34Tags: [
+        "uncle",
+        "niece",
+        "nephew",
+        "uncles",
+        "nieces",
+        "nephews",
+        "step_uncle",
+        "step_nephew",
+        "step_niece"
+      ],
+      title: "Other",
+      xvideosQueries: [
+        "uncle",
+        "niece",
+        "nephew",
+        "uncles",
+        "nieces",
+        "nephews",
+        "step+uncle",
+        "step+nephew",
+        "step+niece",
+        "grandparent"
+      ]
+    }
+  ]
+};
+
 // providers/ddose007/domain.ts
 var URLS_ENDPOINT = "https://raw.githubusercontent.com/Manimanjar/vega-providers/main/urls.json";
-var DEFAULT_BASE_URL = "https://ddose007.tv";
+var DEFAULT_BASE_URL = "https://ddose007.co";
 var BASE_CACHE_KEY = "ddose007_baseUrlCacheV4";
 var LEARNED_KEY = "ddose007_learnedDomainV2";
 var CANDIDATE_MIRRORS = [
-  "https://ddose007.tv",
-  "https://ddose007.rest",
-  "https://ddose007.homes"
+  "https://ddose007.co",
+  "https://ddose007.cc"
 ];
 var memoryCache = { url: "", expiresAt: 0 };
 async function isHealthyMirror(axios, mirror) {
@@ -182,88 +536,51 @@ function normalizeUrl(url, baseUrl) {
   if (url.startsWith("http")) return url;
   return `${baseUrl}${url.startsWith("/") ? "" : "/"}${url}`;
 }
-function extractImageUrl(src, baseUrl) {
-  if (!src) return "";
-  const nextMatch = src.match(/\/_next\/image\?url=([^&]+)/);
-  if (nextMatch) {
-    try {
-      const decoded = decodeURIComponent(nextMatch[1]);
-      if (decoded.startsWith("http")) return decoded;
-    } catch (e) {
-    }
+function wrapImageProxy(imageUrl, baseUrl) {
+  if (!imageUrl) return "";
+  if (imageUrl.includes("pvtcdn.com")) {
+    return `https://vega-tv.vercel.app/api/proxy?url=${encodeURIComponent(
+      imageUrl
+    )}&referer=${encodeURIComponent(baseUrl + "/")}`;
   }
-  if (src.startsWith("data:")) return "";
-  return normalizeUrl(src, baseUrl);
+  return imageUrl;
+}
+function getCategoryConfig(filter) {
+  return categories_config_default.categories.find((c) => c.filter === filter);
 }
 function parseVideoBlocks($, baseUrl) {
   const posts = [];
   const seen = /* @__PURE__ */ new Set();
-  $('a[href^="/post/"]').each((_, el) => {
+  $(".video-block").each((_, el) => {
     const $el = $(el);
-    let link = $el.attr("href") || "";
+    const linkEl = $el.find("a.thumb, a.infos, a").first();
+    const titleEl = $el.find("span.title, a.infos").first();
+    const imgEl = $el.find("img.video-img, img").first();
+    const durationEl = $el.find(".duration").first();
+    const viewsEl = $el.find(".views-number").first();
+    let link = linkEl.attr("href") || "";
     if (!link || link === "#" || link.startsWith("javascript:")) return;
     link = normalizeUrl(link, baseUrl);
     if (seen.has(link)) return;
-    let title = $el.text().replace(/\s+/g, " ").trim();
-    if (!title || title.length < 2) {
-      title = $el.attr("title") || $el.find("img").first().attr("alt") || "Untitled";
-      title = title.replace(/\s+/g, " ").trim();
-    }
-    if (!title || title.length < 2) return;
-    const imgEl = $el.find("img").first();
-    let image = extractImageUrl(
-      imgEl.attr("src") || imgEl.attr("data-src") || "",
-      baseUrl
-    );
-    if (!image) {
-      const srcSet = imgEl.attr("srcSet") || imgEl.attr("srcset") || "";
-      const first = srcSet.split(",")[0].trim().split(" ")[0];
-      image = extractImageUrl(first, baseUrl);
-    }
     seen.add(link);
-    posts.push({ title, link, image });
-  });
-  if (posts.length === 0) {
-    const html = $.html() || "";
-    const jsonLdMatch = html.match(
-      /"@type"\s*:\s*"ItemList"[\s\S]{0,20000}?("itemListElement"\s*:\s*\[[\s\S]*?\])/
-    );
-    if (jsonLdMatch) {
-      try {
-        const items = JSON.parse(`{${jsonLdMatch[1]}}`).itemListElement || [];
-        for (const item of items) {
-          const name = (item.name || "").replace(/\s+/g, " ").trim();
-          const url = item.url || "";
-          if (!name || !url) continue;
-          const link = normalizeUrl(url, baseUrl);
-          if (seen.has(link)) continue;
-          seen.add(link);
-          posts.push({ title: name, link, image: "" });
-        }
-      } catch (e) {
-      }
+    let image = imgEl.attr("data-src") || imgEl.attr("src") || imgEl.attr("data-lazy-src") || "";
+    if (image.startsWith("data:")) {
+      image = imgEl.attr("data-src") || "";
     }
-  }
-  if (posts.length === 0) {
-    $(".video-block").each((_, el) => {
-      const $el = $(el);
-      const linkEl = $el.find("a.thumb, a.infos, a").first();
-      const titleEl = $el.find("span.title, a.infos").first();
-      const imgEl = $el.find("img.video-img, img").first();
-      let link = linkEl.attr("href") || "";
-      if (!link || link === "#" || link.startsWith("javascript:")) return;
-      link = normalizeUrl(link, baseUrl);
-      if (seen.has(link)) return;
-      let title = titleEl.text().trim() || linkEl.attr("title") || imgEl.attr("alt") || "Untitled";
-      title = title.replace(/\s+/g, " ").trim();
-      if (!title || title.length < 2) return;
-      let image = imgEl.attr("data-src") || imgEl.attr("src") || imgEl.attr("data-lazy-src") || "";
-      if (image.startsWith("data:")) image = imgEl.attr("data-src") || "";
-      image = normalizeUrl(image, baseUrl);
-      seen.add(link);
-      posts.push({ title, link, image });
+    image = wrapImageProxy(normalizeUrl(image, baseUrl), baseUrl);
+    let title = titleEl.text().trim() || linkEl.attr("title") || imgEl.attr("alt") || "Untitled";
+    title = title.replace(/\s+/g, " ").trim();
+    if (!title || title.length < 2) return;
+    const tag = durationEl.text().trim() || void 0;
+    const cornerTag = viewsEl.text().trim() || void 0;
+    posts.push({
+      title,
+      link,
+      image,
+      tag,
+      cornerTag
     });
-  }
+  });
   return posts;
 }
 async function getPosts(filterOrOptions, pageArg, signalArg, providerContextArg) {
@@ -289,10 +606,17 @@ async function getPosts(filterOrOptions, pageArg, signalArg, providerContextArg)
   const baseUrl = await getBaseUrl(kvStore, axios);
   let targetUrl = baseUrl;
   if (!filter || filter === "homepage") {
-    targetUrl = page === 1 ? `${baseUrl}/` : `${baseUrl}/page/${page}`;
+    targetUrl = page === 1 ? `${baseUrl}/` : `${baseUrl}/page/${page}/`;
   } else {
-    const cleanFilter = filter.replace(/^\/+|\/+$/g, "");
-    targetUrl = page === 1 ? `${baseUrl}/${cleanFilter}` : `${baseUrl}/${cleanFilter}/page/${page}`;
+    const catCfg = getCategoryConfig(filter);
+    if (catCfg) {
+      const query = (catCfg.title || filter).toLowerCase();
+      const q = encodeURIComponent(query);
+      targetUrl = page === 1 ? `${baseUrl}/?s=${q}` : `${baseUrl}/page/${page}/?s=${q}`;
+    } else {
+      const cleanFilter = filter.replace(/^\/+|\/+$/g, "");
+      targetUrl = page === 1 ? `${baseUrl}/${cleanFilter}/` : `${baseUrl}/${cleanFilter}/page/${page}/`;
+    }
   }
   try {
     const res = await axios.get(targetUrl, {
@@ -332,31 +656,23 @@ async function getSearchPosts(queryOrOptions, pageArg, signalArg, providerContex
   const axios = providerContext?.axios;
   const cheerio = providerContext?.cheerio;
   if (!axios || !cheerio || !searchQuery) return [];
-  if (page > 1) return [];
   const baseUrl = await getBaseUrl(kvStore, axios);
-  const needle = searchQuery.trim().toLowerCase();
-  if (!needle) return [];
-  const headers = {
-    "User-Agent": USER_AGENT,
-    Referer: baseUrl,
-    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-  };
-  const matches = [];
-  const seen = /* @__PURE__ */ new Set();
-  for (let p = 1; p <= 3; p++) {
-    const targetUrl = p === 1 ? `${baseUrl}/` : `${baseUrl}/page/${p}`;
-    try {
-      const res = await axios.get(targetUrl, { timeout: 8e3, signal, headers });
-      recordRedirect(res, baseUrl, kvStore);
-      const $ = cheerio.load(res.data);
-      const pagePosts = parseVideoBlocks($, baseUrl);
-      for (const post of pagePosts) {
-        if (seen.has(post.link)) continue;
-        seen.add(post.link);
-        if (post.title.toLowerCase().includes(needle)) matches.push(post);
+  const q = encodeURIComponent(searchQuery);
+  const targetUrl = page === 1 ? `${baseUrl}/?s=${q}` : `${baseUrl}/page/${page}/?s=${q}`;
+  try {
+    const res = await axios.get(targetUrl, {
+      timeout: 8e3,
+      signal,
+      headers: {
+        "User-Agent": USER_AGENT,
+        Referer: baseUrl,
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
       }
-    } catch (e) {
-    }
+    });
+    recordRedirect(res, baseUrl, kvStore);
+    const $ = cheerio.load(res.data);
+    return parseVideoBlocks($, baseUrl);
+  } catch (e) {
+    return [];
   }
-  return matches;
 }

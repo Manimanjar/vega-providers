@@ -53,11 +53,10 @@
   },
   "ddose007": {
     "name": "Ddose007",
-    "url": "https://ddose007.tv",
+    "url": "https://ddose007.co",
     "mirrors": [
-      "https://ddose007.tv",
-      "https://ddose007.rest",
-      "https://ddose007.homes"
+      "https://ddose007.co",
+      "https://ddose007.cc"
     ]
   }
 }
