@@ -6,62 +6,6 @@ import { getBaseUrl } from "./domain";
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-// The generic embed URL the site puts in VideoObject.contentUrl for
-// Terabox-hosted posts. It returns HTTP 404, so it must never be served
-// as a stream (it would only produce a dead player).
-const DEAD_EMBED_MP4 = "https://video.downloaddirect.xyz/embed.mp4";
-
-function isPlayableMp4(url: string): boolean {
-  if (!url || typeof url !== "string") return false;
-  const clean = url.trim();
-  if (!/^https?:\/\//i.test(clean)) return false;
-  if (!/\.mp4(\?|#|$)/i.test(clean)) return false;
-  if (clean === DEAD_EMBED_MP4 || clean.endsWith("/embed.mp4")) return false;
-  return true;
-}
-
-/**
- * Extract the direct video URL from a post page (verified 2026-11-25).
- * The page carries a JSON-LD VideoObject whose contentUrl is the real
- * file (e.g. https://video.downloaddirect.xyz/<uuid>.mp4). Terabox-hosted
- * posts only carry the dead generic embed.mp4 there and their real video
- * lives inside the Terabox iframe, which has no direct link — those
- * return no stream rather than a broken one.
- */
-function extractVideoUrl(pageHtml: string): string {
-  // 1. JSON-LD VideoObject contentUrl (most reliable).
-  const ldMatches = pageHtml.match(
-    /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
-  );
-  if (ldMatches) {
-    for (const block of ldMatches) {
-      const inner = block.replace(/<script[^>]*>/i, "").replace(/<\/script>/i, "");
-      try {
-        const data = JSON.parse(inner);
-        const objects = Array.isArray(data) ? data : [data];
-        for (const obj of objects) {
-          if (obj && obj["@type"] === "VideoObject" && obj.contentUrl) {
-            const url = String(obj.contentUrl).trim();
-            if (isPlayableMp4(url)) return url;
-            // A VideoObject whose contentUrl is the dead embed means this
-            // post is Terabox-hosted: stop here instead of falling through
-            // to a regex that would return the same dead URL.
-            if (url === DEAD_EMBED_MP4 || url.endsWith("/embed.mp4")) return "";
-          }
-        }
-      } catch (e) {}
-    }
-  }
-
-  // 2. Any direct .mp4 URL in the page (covers posts without JSON-LD).
-  const anyMp4 = pageHtml.match(/https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*/i);
-  if (anyMp4 && isPlayableMp4(anyMp4[0])) {
-    return anyMp4[0].replace(/\\+$/, "");
-  }
-
-  return "";
-}
-
 export async function getStream(
   linkOrOptions: any,
   typeArg?: string,
@@ -111,21 +55,53 @@ export async function getStream(
     });
 
     const pageHtml = String(pageRes.data || "");
-    const directUrl = extractVideoUrl(pageHtml);
+    const $ = cheerio.load(pageHtml);
+
+    const streams: Stream[] = [];
+    const headers = {
+      Referer: `${baseUrl}/`,
+      "User-Agent": USER_AGENT,
+    };
+
+    // 1. Check direct contentURL in metadata
+    let directUrl = $('meta[itemprop="contentURL"]').attr("content") || "";
+
+    // 2. Check source tags
+    if (!directUrl) {
+      $("source").each((_: any, el: any) => {
+        const src = $(el).attr("src") || "";
+        if (src && (src.includes(".mp4") || src.includes(".m3u8")) && !directUrl) {
+          directUrl = src;
+        }
+      });
+    }
+
+    // 3. Check regex match for pvtcdn or mp4
+    if (!directUrl) {
+      const pvtMatch = pageHtml.match(
+        /https?:\/\/[a-zA-Z0-9_.-]*(?:pvtcdn\.com|ddose007)[^\s"'<>]+\.mp4/i
+      );
+      if (pvtMatch) directUrl = pvtMatch[0];
+    }
+
+    if (!directUrl) {
+      const anyMp4 = pageHtml.match(
+        /https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*/i
+      );
+      if (anyMp4) directUrl = anyMp4[0];
+    }
 
     if (directUrl) {
-      return [
-        {
-          server: "Ddose Direct",
-          link: directUrl,
-          type: "mp4",
-          quality: "HD",
-          headers: {
-            Referer: `${baseUrl}/`,
-            "User-Agent": USER_AGENT,
-          },
-        },
-      ];
+      const isM3u8 = directUrl.includes(".m3u8");
+      streams.push({
+        server: "Ddose Direct High Speed (1080p)",
+        link: directUrl,
+        type: isM3u8 ? "m3u8" : "mp4",
+        quality: "1080",
+        headers,
+      });
+
+      return streams;
     }
 
     return [];
