@@ -52,5 +52,14 @@
     "type": "global",
     "disabled": false,
     "hasSettings": true
+  },
+  {
+    "display_name": "XHamster",
+    "value": "xhamster",
+    "version": "1.0.0",
+    "icon": "https://xhamster.com/favicon.ico",
+    "type": "global",
+    "disabled": false,
+    "hasSettings": true
   }
 ]

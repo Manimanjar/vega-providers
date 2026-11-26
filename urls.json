@@ -58,5 +58,13 @@
       "https://ddose007.co",
       "https://ddose007.cc"
     ]
+  },
+  "xhamster": {
+    "name": "XHamster",
+    "url": "https://xhamster.com",
+    "mirrors": [
+      "https://xhamster.com",
+      "https://xhamster.desi"
+    ]
   }
 }
