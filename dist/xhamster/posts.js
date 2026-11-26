@@ -1,5 +1,5 @@
 // @vega-provider xhamster
-// @vega-version 1.0.0
+// @vega-version 1.0.1
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -176,7 +176,7 @@ function rewriteToBase(link, baseUrl) {
 
 // providers/xhamster/posts.ts
 var DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-var MAX_LIST_ATTEMPTS = 3;
+var MAX_LIST_ATTEMPTS = 5;
 var MIN_DURATION_SECONDS = 120;
 var MAX_SEEN_ENTRIES = 800;
 function formatDuration(totalSeconds) {

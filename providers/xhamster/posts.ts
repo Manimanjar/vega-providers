@@ -7,8 +7,9 @@ const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 // XHamster serves a random JS shell page (~55 KB, no video data) instead of
-// the full SSR page on some requests. Retry a few times to land a full page.
-const MAX_LIST_ATTEMPTS = 3;
+// the full SSR page on some requests, and shell pages can arrive in bursts.
+// Retry a few times to land a full page.
+const MAX_LIST_ATTEMPTS = 5;
 // Videos shorter than 2 minutes are excluded (app-wide rule).
 const MIN_DURATION_SECONDS = 120;
 // Cap the cross-page seen set so the kvStore value stays small.
