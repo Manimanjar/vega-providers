@@ -1,5 +1,5 @@
 // @vega-provider xhamster
-// @vega-version 1.0.0
+// @vega-version 1.0.1
 "use strict";
 "use strict";
 var __defProp = Object.defineProperty;

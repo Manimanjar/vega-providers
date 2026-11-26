@@ -1,5 +1,5 @@
 // @vega-provider xhamster
-// @vega-version 1.0.0
+// @vega-version 1.0.1
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -28,6 +28,11 @@ __export(catalog_exports, {
 module.exports = __toCommonJS(catalog_exports);
 var catalog = [
   { title: "Homepage", filter: "homepage" },
+  // Account feed — only returns videos when the session cookie is valid.
+  // Guest (no cookie / dead cookie) returns an empty list, so this is the
+  // visible login test: if it has videos, the cookie is working.
+  { title: "My Subscriptions", filter: "/my/subscriptions" },
+  { title: "Premium Videos", filter: "/categories/premium" },
   { title: "Best Videos", filter: "/best" },
   { title: "Best Today", filter: "/best/daily" },
   { title: "Best This Week", filter: "/best/weekly" },
